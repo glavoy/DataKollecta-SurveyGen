@@ -78,7 +78,7 @@ class GiSTXProcessor:
                 manifest = SurveyManifest(
                     surveyName=self.config.surveyName,
                     surveyId=self.config.surveyId,
-                    databaseName=f"{self.config.surveyId}.sqlite",
+                    databaseName=self.config.databaseName,
                     xmlFiles=xml_files,
                     crfs=crfs,
                 )
@@ -118,11 +118,13 @@ class GiSTXProcessor:
             return False
 
     def _write_logfile(self) -> None:
+        # Matches the C# StreamWriter output: CRLF after every line, and a
+        # final WriteLine("\n") that emits "\n\r\n".
         logfile = Path(self.config.outputPath) / "gistlogfile.txt"
-        with logfile.open("w", encoding="utf-8", newline="\n") as f:
+        with logfile.open("w", encoding="utf-8", newline="") as f:
             for line in self.logstring:
-                f.write(line + "\n")
-            f.write("\n")
+                f.write(line + "\r\n")
+            f.write("\n\r\n")
 
     def _create_zip_file(self) -> None:
         zip_file_path = Path(self.config.outputPath) / f"{self.config.surveyId}.zip"
@@ -168,6 +170,7 @@ def run_from_config_file(config_file: str | Path) -> int:
         outputPath=data.get("outputPath", ""),
         surveyName=data.get("surveyName", ""),
         surveyId=data.get("surveyId", ""),
+        databaseName=data.get("databaseName", ""),
     )
     processor = GiSTXProcessor(config)
     return processor.run()

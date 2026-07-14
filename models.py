@@ -110,6 +110,7 @@ class AppConfig:
     outputPath: str = ""
     surveyName: str = ""
     surveyId: str = ""
+    databaseName: str = ""
 
 
 @dataclass

@@ -99,7 +99,8 @@ Exit code:
 
 ## Configuration
 
-Create/edit `config.json` in the project root:
+Copy `config.sample.json` to `config.json` in the project root and edit it
+(`config.json` is gitignored, so your local paths stay out of the repo):
 
 ```json
 {
@@ -107,7 +108,8 @@ Create/edit `config.json` in the project root:
   "csvFiles": "/absolute/path/to/csv/folder",
   "outputPath": "/absolute/path/to/output",
   "surveyName": "PRISM CSS 2026-01-05",
-  "surveyId": "prism_css_2026_01_05"
+  "surveyId": "prism_css_2026_01_05",
+  "databaseName": "prism_css_2026_01_05.sqlite"
 }
 ```
 
@@ -119,7 +121,8 @@ Create/edit `config.json` in the project root:
 | `csvFiles` | No | Folder containing CSV files for dynamic responses; all `*.csv` added to zip |
 | `outputPath` | Yes | Directory for zip and log output |
 | `surveyName` | Yes | Human-readable survey name |
-| `surveyId` | Yes | Survey identifier, used for `databaseName` and zip filename |
+| `surveyId` | Yes | Survey identifier, used for the zip filename (`<surveyId>.zip`) |
+| `databaseName` | Yes | SQLite database filename written verbatim into `survey_manifest.gistx` |
 
 Notes:
 - `databaseName` in manifest is auto-generated as `<surveyId>.sqlite`

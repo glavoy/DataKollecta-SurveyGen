@@ -5,6 +5,13 @@ from pathlib import Path
 
 from models import CalculationPart, CalculationType, Question, ResponseSourceType
 
+# The Windows app writes files with .NET StreamWriter on Windows: every WriteLine
+# ends with CRLF, and WriteLine("\n") emits "\n\r\n". NEWLINE/BLANK_LINE reproduce
+# those exact byte sequences so output diffs cleanly against the original app.
+NEWLINE = "\r\n"
+BLANK_LINE = "\n\r\n"
+
+
 class XmlGenerator:
     def __init__(self) -> None:
         self.logstring: list[str] = []
@@ -16,50 +23,53 @@ class XmlGenerator:
             xml_name = worksheet_name[:-4]
 
         out_file = xml_path / f"{xml_name}.xml"
-        with out_file.open("w", encoding="utf-8", newline="\n") as f:
-            f.write("<?xml version = '1.0' encoding = 'utf-8'?>\n")
-            f.write("<survey>\n\n")
+        with out_file.open("w", encoding="utf-8", newline="") as f:
+
+            def wl(line: str = "") -> None:
+                f.write(line + NEWLINE)
+
+            wl("<?xml version = '1.0' encoding = 'utf-8'?>")
+            wl("<survey>")
+            f.write(BLANK_LINE)
 
             for q in question_list:
-                f.write(
-                    f"\t<question type = '{q.questionType}' fieldname = '{q.fieldName}' fieldtype = '{q.fieldType}'>\n"
-                )
+                wl(f"\t<question type = '{q.questionType}' fieldname = '{q.fieldName}' fieldtype = '{q.fieldType}'>")
 
                 if q.questionType != "automatic":
-                    f.write(f"\t\t<text>{q.questionText}</text>\n")
+                    wl(f"\t\t<text>{q.questionText}</text>")
 
                 if q.questionType == "automatic" and q.calculationType != CalculationType.NONE:
-                    self._generate_calculation_xml(f, q)
+                    self._generate_calculation_xml(wl, q)
 
                 if q.maxCharacters != "-9":
-                    f.write(f"\t\t<maxCharacters>{q.maxCharacters}</maxCharacters>\n")
+                    wl(f"\t\t<maxCharacters>{q.maxCharacters}</maxCharacters>")
 
                 if q.mask:
-                    f.write(f"\t\t<mask value=\"{q.mask}\" />\n")
+                    wl(f"\t\t<mask value=\"{q.mask}\" />")
 
                 if q.uniqueCheckMessage:
-                    f.write("\t\t<unique_check>\n")
-                    f.write(f"\t\t\t<message>{q.uniqueCheckMessage}</message>\n")
-                    f.write("\t\t</unique_check>\n")
+                    wl("\t\t<unique_check>")
+                    wl(f"\t\t\t<message>{q.uniqueCheckMessage}</message>")
+                    wl("\t\t</unique_check>")
 
                 if q.questionType != "date" and q.lowerRange != "-9":
-                    f.write("\t\t<numeric_check>\n")
-                    f.write(
+                    wl("\t\t<numeric_check>")
+                    wl(
                         f"\t\t\t<values minvalue ='{q.lowerRange}' maxvalue='{q.upperRange}' other_values = '{q.lowerRange}' "
-                        f"message = 'Number must be between {q.lowerRange} and {q.upperRange}!'></values>\n"
+                        f"message = 'Number must be between {q.lowerRange} and {q.upperRange}!'></values>"
                     )
-                    f.write("\t\t</numeric_check>\n")
+                    wl("\t\t</numeric_check>")
 
                 if q.questionType == "date":
-                    f.write("\t\t<date_range>\n")
-                    f.write(f"\t\t\t<min_date>{q.lowerRange}</min_date>\n")
-                    f.write(f"\t\t\t<max_date>{q.upperRange}</max_date>\n")
-                    f.write("\t\t</date_range>\n")
+                    wl("\t\t<date_range>")
+                    wl(f"\t\t\t<min_date>{q.lowerRange}</min_date>")
+                    wl(f"\t\t\t<max_date>{q.upperRange}</max_date>")
+                    wl("\t\t</date_range>")
 
                 for logic_check in q.logicChecks:
-                    f.write("\t\t<logic_check>\n")
-                    f.write(self._generate_logic_check(logic_check) + "\n")
-                    f.write("\t\t</logic_check>\n")
+                    wl("\t\t<logic_check>")
+                    wl(self._generate_logic_check(logic_check))
+                    wl("\t\t</logic_check>")
 
                 if q.questionType in {"radio", "checkbox", "combobox"}:
                     attrs = ""
@@ -67,67 +77,67 @@ class XmlGenerator:
                         attrs += f" source='csv' file='{q.responseSourceFile}'"
                     elif q.responseSourceType == ResponseSourceType.DATABASE:
                         attrs += f" source='database' table='{q.responseSourceTable}'"
-                    f.write(f"\t\t<responses{attrs}>\n")
+                    wl(f"\t\t<responses{attrs}>")
 
                     for flt in q.responseFilters:
-                        f.write(
-                            f"\t\t\t<filter column='{flt.column}' operator='{flt.operator}' value='{flt.value}'/>\n"
-                        )
+                        wl(f"\t\t\t<filter column='{flt.column}' operator='{flt.operator}' value='{flt.value}'/>")
                     if q.responseDisplayColumn:
-                        f.write(f"\t\t\t<display column='{q.responseDisplayColumn}'/>\n")
+                        wl(f"\t\t\t<display column='{q.responseDisplayColumn}'/>")
                     if q.responseValueColumn:
-                        f.write(f"\t\t\t<value column='{q.responseValueColumn}'/>\n")
+                        wl(f"\t\t\t<value column='{q.responseValueColumn}'/>")
                     if q.responseDistinct is not None:
-                        f.write(f"\t\t\t<distinct>{str(q.responseDistinct).lower()}</distinct>\n")
+                        wl(f"\t\t\t<distinct>{str(q.responseDistinct).lower()}</distinct>")
                     if q.responseEmptyMessage:
-                        f.write(f"\t\t\t<empty_message>{q.responseEmptyMessage}</empty_message>\n")
+                        wl(f"\t\t\t<empty_message>{q.responseEmptyMessage}</empty_message>")
                     if q.responseDontKnowValue:
                         label_attr = f" label='{q.responseDontKnowLabel}'" if q.responseDontKnowLabel else ""
-                        f.write(f"\t\t\t<dont_know value='{q.responseDontKnowValue}'{label_attr}/>\n")
+                        wl(f"\t\t\t<dont_know value='{q.responseDontKnowValue}'{label_attr}/>")
                     if q.responseNotInListValue:
                         label_attr = f" label='{q.responseNotInListLabel}'" if q.responseNotInListLabel else ""
-                        f.write(f"\t\t\t<not_in_list value='{q.responseNotInListValue}'{label_attr}/>\n")
+                        wl(f"\t\t\t<not_in_list value='{q.responseNotInListValue}'{label_attr}/>")
 
                     if q.responseSourceType == ResponseSourceType.STATIC:
                         responses = [r for r in re.split(r"\r\n|\n|\r", q.responses) if r]
                         if len(responses) == 0:
-                            f.write("\t\t\t<response></response>\n")
+                            wl("\t\t\t<response></response>")
                         else:
                             for response in responses:
                                 index = response.find(":")
                                 value = response[:index]
                                 label = response[index + 1 :].strip()
-                                f.write(f"\t\t\t<response value = '{value}'>{label}</response>\n")
-                    f.write("\t\t</responses>\n")
+                                wl(f"\t\t\t<response value = '{value}'>{label}</response>")
+                    wl("\t\t</responses>")
 
                 if q.skip:
                     skips = [s for s in re.split(r"\r\n|\n|\r", q.skip) if s]
-                    pre = [s for s in skips if s.startswith("preskip:")]
-                    post = [s for s in skips if s.startswith("postskip:")]
+                    pre = [s for s in skips if s[: s.find(":")] == "preskip"]
+                    post = [s for s in skips if s[: s.find(":")] == "postskip"]
                     if pre:
-                        f.write("\t\t<preskip>\n")
+                        wl("\t\t<preskip>")
                         for s in pre:
-                            f.write(self._generate_skip(s, "preSkip") + "\n")
-                        f.write("\t\t</preskip>\n")
+                            wl(self._generate_skip(s, "preSkip"))
+                        wl("\t\t</preskip>")
                     if post:
-                        f.write("\t\t<postskip>\n")
+                        wl("\t\t<postskip>")
                         for s in post:
-                            f.write(self._generate_skip(s, "postSkip") + "\n")
-                        f.write("\t\t</postskip>\n")
+                            wl(self._generate_skip(s, "postSkip"))
+                        wl("\t\t</postskip>")
 
                 if q.dontKnow in {"TRUE", "True"}:
-                    f.write("\t\t<dont_know>-7</dont_know>\n")
+                    wl("\t\t<dont_know>-7</dont_know>")
                 if q.refuse in {"TRUE", "True"}:
-                    f.write("\t\t<refuse>-8</refuse>\n")
+                    wl("\t\t<refuse>-8</refuse>")
                 if q.na in {"TRUE", "True"}:
-                    f.write("\t\t<na>-6</na>\n")
+                    wl("\t\t<na>-6</na>")
 
-                f.write("\t</question>\n\n")
+                wl("\t</question>")
+                f.write(BLANK_LINE)
 
-            f.write("\t<question type = 'information' fieldname = 'end_of_questions' fieldtype = 'n/a'>\n")
-            f.write("\t\t<text>Press the 'Finish' button to save the data.</text >\n")
-            f.write("\t</question>\n\n")
-            f.write("</survey>\n")
+            wl("\t<question type = 'information' fieldname = 'end_of_questions' fieldtype = 'n/a'>")
+            wl("\t\t<text>Press the 'Finish' button to save the data.</text >")
+            wl("\t</question>")
+            f.write(BLANK_LINE)
+            wl("</survey>")
 
         return out_file
 
@@ -163,93 +173,96 @@ class XmlGenerator:
         expression = re.sub(r"(?<!&lt;=)(?<!&gt;=)>(?!=)", "&gt;", expression)
 
         if " or " in expression:
+            # Mirrors the C# StringBuilder layout: each 'or' clause on its own line,
+            # ';' directly after the last clause, message on the following line.
             parts = expression.split(" or ")
-            lines = []
+            result = ""
             for i, part in enumerate(parts):
-                suffix = " or" if i < len(parts) - 1 else ""
-                lines.append(f"\t\t\t{part.strip()}{suffix}")
-            lines.append(";")
-            lines.append(f"\t\t\t{message}")
-            return "\n".join(lines)
+                result += "\t\t\t" + part.strip()
+                if i < len(parts) - 1:
+                    result += " or" + NEWLINE
+            result += ";" + NEWLINE
+            result += "\t\t\t" + message
+            return result
 
         return f"\t\t\t{expression}; {message}"
 
-    def _generate_calculation_xml(self, f, q: Question) -> None:
+    def _generate_calculation_xml(self, wl, q: Question) -> None:
         if q.calculationType == CalculationType.QUERY:
-            f.write("\t\t<calculation type='query'>\n")
-            f.write(f"\t\t\t<sql>{q.calculationQuerySql}</sql>\n")
+            wl("\t\t<calculation type='query'>")
+            wl(f"\t\t\t<sql>{q.calculationQuerySql}</sql>")
             for param in q.calculationQueryParameters:
-                f.write(f"\t\t\t<parameter name='{param.name}' field='{param.fieldName}' />\n")
-            f.write("\t\t</calculation>\n")
+                wl(f"\t\t\t<parameter name='{param.name}' field='{param.fieldName}' />")
+            wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.CASE:
-            f.write("\t\t<calculation type='case'>\n")
+            wl("\t\t<calculation type='case'>")
             for cond in q.calculationCaseConditions:
                 op = self._convert_operator_to_xml(cond.operator)
-                f.write(f"\t\t\t<when field='{cond.field}' operator='{op}' value='{cond.value}'>\n")
+                wl(f"\t\t\t<when field='{cond.field}' operator='{op}' value='{cond.value}'>")
                 if cond.result:
-                    self._generate_calculation_part(f, cond.result, 4)
-                f.write("\t\t\t</when>\n")
+                    self._generate_calculation_part(wl, cond.result, 4)
+                wl("\t\t\t</when>")
             if q.calculationCaseElse:
-                f.write("\t\t\t<else>\n")
-                self._generate_calculation_part(f, q.calculationCaseElse, 4)
-                f.write("\t\t\t</else>\n")
-            f.write("\t\t</calculation>\n")
+                wl("\t\t\t<else>")
+                self._generate_calculation_part(wl, q.calculationCaseElse, 4)
+                wl("\t\t\t</else>")
+            wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.CONSTANT:
-            f.write(f"\t\t<calculation type='constant' value='{q.calculationConstantValue}' />\n")
+            wl(f"\t\t<calculation type='constant' value='{q.calculationConstantValue}' />")
         elif q.calculationType == CalculationType.LOOKUP:
-            f.write(f"\t\t<calculation type='lookup' field='{q.calculationLookupField}' />\n")
+            wl(f"\t\t<calculation type='lookup' field='{q.calculationLookupField}' />")
         elif q.calculationType == CalculationType.MATH:
-            f.write(f"\t\t<calculation type='math' operator='{q.calculationMathOperator}'>\n")
+            wl(f"\t\t<calculation type='math' operator='{q.calculationMathOperator}'>")
             for part in q.calculationMathParts:
-                self._generate_calculation_part(f, part, 3)
-            f.write("\t\t</calculation>\n")
+                self._generate_calculation_part(wl, part, 3)
+            wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.CONCAT:
             separator_attr = f" separator='{q.calculationConcatSeparator}'" if q.calculationConcatSeparator else ""
-            f.write(f"\t\t<calculation type='concat'{separator_attr}>\n")
+            wl(f"\t\t<calculation type='concat'{separator_attr}>")
             for part in q.calculationConcatParts:
-                self._generate_calculation_part(f, part, 3)
-            f.write("\t\t</calculation>\n")
+                self._generate_calculation_part(wl, part, 3)
+            wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.AGE_FROM_DATE:
-            f.write(
-                f"\t\t<calculation type='age_from_date' field='{q.calculationLookupField}' value='{q.calculationConstantValue}'/>\n"
+            wl(
+                f"\t\t<calculation type='age_from_date' field='{q.calculationLookupField}' value='{q.calculationConstantValue}'/>"
             )
         elif q.calculationType == CalculationType.AGE_AT_DATE:
             separator_attr = f" separator='{q.calculationConcatSeparator}'" if q.calculationConcatSeparator else ""
-            f.write(
-                f"\t\t<calculation type='age_at_date' field='{q.calculationLookupField}' value='{q.calculationConstantValue}'{separator_attr}/>\n"
+            wl(
+                f"\t\t<calculation type='age_at_date' field='{q.calculationLookupField}' value='{q.calculationConstantValue}'{separator_attr}/>"
             )
         elif q.calculationType == CalculationType.DATE_OFFSET:
-            f.write(
-                f"\t\t<calculation type='date_offset' field='{q.calculationLookupField}' value='{q.calculationConstantValue}' />\n"
+            wl(
+                f"\t\t<calculation type='date_offset' field='{q.calculationLookupField}' value='{q.calculationConstantValue}' />"
             )
         elif q.calculationType == CalculationType.DATE_DIFF:
-            f.write(
-                f"\t\t<calculation type='date_diff' field='{q.calculationLookupField}' value='{q.calculationConstantValue}' unit='{q.calculationUnit}' />\n"
+            wl(
+                f"\t\t<calculation type='date_diff' field='{q.calculationLookupField}' value='{q.calculationConstantValue}' unit='{q.calculationUnit}' />"
             )
 
-    def _generate_calculation_part(self, f, part: CalculationPart, indent_level: int) -> None:
+    def _generate_calculation_part(self, wl, part: CalculationPart, indent_level: int) -> None:
         indent = "\t" * indent_level
         if part.type == CalculationType.CONSTANT:
-            f.write(f"{indent}<result type='constant' value='{part.constantValue}' />\n")
+            wl(f"{indent}<result type='constant' value='{part.constantValue}' />")
         elif part.type == CalculationType.LOOKUP:
-            f.write(f"{indent}<part type='lookup' field='{part.lookupField}' />\n")
+            wl(f"{indent}<part type='lookup' field='{part.lookupField}' />")
         elif part.type == CalculationType.QUERY:
-            f.write(f"{indent}<part type='query'>\n")
-            f.write(f"{indent}\t<sql>{part.querySql}</sql>\n")
+            wl(f"{indent}<part type='query'>")
+            wl(f"{indent}\t<sql>{part.querySql}</sql>")
             for param in part.queryParameters:
-                f.write(f"{indent}\t<parameter name='{param.name}' field='{param.fieldName}' />\n")
-            f.write(f"{indent}</part>\n")
+                wl(f"{indent}\t<parameter name='{param.name}' field='{param.fieldName}' />")
+            wl(f"{indent}</part>")
         elif part.type == CalculationType.MATH:
-            f.write(f"{indent}<part type='math' operator='{part.mathOperator}'>\n")
+            wl(f"{indent}<part type='math' operator='{part.mathOperator}'>")
             for nested in part.parts:
-                self._generate_calculation_part(f, nested, indent_level + 1)
-            f.write(f"{indent}</part>\n")
+                self._generate_calculation_part(wl, nested, indent_level + 1)
+            wl(f"{indent}</part>")
         elif part.type == CalculationType.CONCAT:
             separator_attr = f" separator='{part.concatSeparator}'" if part.concatSeparator else ""
-            f.write(f"{indent}<part type='concat'{separator_attr}>\n")
+            wl(f"{indent}<part type='concat'{separator_attr}>")
             for nested in part.parts:
-                self._generate_calculation_part(f, nested, indent_level + 1)
-            f.write(f"{indent}</part>\n")
+                self._generate_calculation_part(wl, nested, indent_level + 1)
+            wl(f"{indent}</part>")
 
     @staticmethod
     def _convert_operator_to_xml(op: str) -> str:

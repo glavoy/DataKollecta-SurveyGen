@@ -1,0 +1,8 @@
+{
+  "excelFile": "/path/to/your/Data_Dictionary.xlsx",
+  "csvFiles": "/path/to/your/csv_files/",
+  "outputPath": "/path/to/output/",
+  "surveyName": "My Survey Name",
+  "surveyId": "my_survey_id",
+  "databaseName": "my_database.sqlite"
+}

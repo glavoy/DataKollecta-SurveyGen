@@ -209,3 +209,10 @@ marimo/_lsp/
 __marimo__/
 
 .DS_Store
+
+
+gistx_config/
+sample_inputs/
+sample_outputs/
+# Local configuration (copy config.sample.json to config.json and edit)
+config.json
