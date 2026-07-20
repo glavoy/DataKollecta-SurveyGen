@@ -40,6 +40,8 @@ class GiSTXProcessor:
                 ]
             )
             self._write_logfile()
+            print(f"ERROR: Excel file not found: {excel_path}")
+            print("Please check the 'excelFile' path in config.json.")
             return 1
 
         workbook = load_workbook(filename=excel_path, data_only=False)
@@ -100,6 +102,17 @@ class GiSTXProcessor:
                 self._create_zip_file()
 
             self._write_logfile()
+
+            # Console equivalent of the Windows app's SUCCESS/ERRORS FOUND message boxes
+            logfile_path = output_path / "gistlogfile.txt"
+            if self.errorsEncountered:
+                print("ERRORS FOUND: The Data Dictionary contains errors!")
+                print("The XML files and manifest HAVE NOT been created.")
+                print(f"Please refer to the log file and rectify all errors: {logfile_path}")
+            else:
+                print("SUCCESS: Built the XML file(s) and the manifest. No errors were found.")
+                print(f"All files have been packaged in: {output_path / (self.config.surveyId + '.zip')}")
+                print(f"Log file: {logfile_path}")
             return 1 if self.errorsEncountered else 0
         finally:
             workbook.close()
