@@ -68,7 +68,8 @@ class ExcelReader:
         "hourmin",
     }
     BUILT_IN_AUTO_FIELDS = {"starttime", "stoptime", "uniqueid", "swver", "survey_id", "lastmod"}
-    LOGIC_KEYWORDS = {"and", "or", "not"}
+    # Word operators are excluded from field-reference validation.
+    LOGIC_KEYWORDS = {"and", "or", "not", "contains", "does", "contain"}
 
     def __init__(self) -> None:
         self.logstring: list[str] = []
@@ -421,7 +422,7 @@ class ExcelReader:
                 f"(message must be in single quotes): {logic_check}"
             )
             return
-        operators = ["=", "!=", "<>", ">", ">=", "<", "<=", "and", "or"]
+        operators = ["=", "!=", "<>", ">", ">=", "<", "<=", "and", "or", "contains", "does not contain"]
         if not any(op in expression for op in operators):
             self._error(
                 f"ERROR - LogicCheck: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for LogicCheck "
@@ -911,4 +912,3 @@ class ExcelReader:
                     f"ERROR - Calculation: DateDiff calculation for FieldName '{fieldname}' in worksheet '{worksheet}' "
                     f"has invalid 'unit': {question.calculationUnit}. Must be 'd', 'w', 'm', or 'y'."
                 )
-

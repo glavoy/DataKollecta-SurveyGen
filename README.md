@@ -460,10 +460,43 @@ Unique check format:
 unique; 'This ID has already been used'
 ```
 
+Checkbox `contains` operators:
+
+Use these operators in a LogicCheck expression when testing a checkbox or other multi-select field. Unlike Skip rules, the operator words are not quoted:
+
+```text
+symptoms contains '99'; 'Example message'
+symptoms does not contain '99'; 'Example message'
+```
+
+For example, define a `symptoms` checkbox field with these static responses:
+
+```text
+1:Fever
+2:Cough
+3:Symptom 3
+4:Symptom 4
+5:Symptom 5
+6:Symptom 6
+7:Symptom 7
+8:Symptom 8
+9:Symptom 9
+10:Symptom 10
+11:Symptom 11
+12:Symptom 12
+99:Child does not have any symptoms
+```
+
+Use this complete value in the `LogicCheck` cell to prevent selecting `99` together with any other symptom:
+
+```text
+symptoms contains '99' and (symptoms contains '1' or symptoms contains '2' or symptoms contains '3' or symptoms contains '4' or symptoms contains '5' or symptoms contains '6' or symptoms contains '7' or symptoms contains '8' or symptoms contains '9' or symptoms contains '10' or symptoms contains '11' or symptoms contains '12'); 'Cannot select "Child does not have any symptoms" together with other symptoms'
+```
+
 Validation rules:
 - Must include semicolon
 - Message must be in single quotes
-- Expression must include operators/logic
+- Expression must include comparison, logical, `contains`, or `does not contain` operators
 - Referenced fields must exist
 - Referenced fields must appear before current row
 
