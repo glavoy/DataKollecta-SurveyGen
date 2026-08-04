@@ -41,7 +41,12 @@ class ExcelReader:
     HARDCODED_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
     FIELD_NAME_RE = re.compile(r"\b[a-z_][a-z0-9_]*\b", re.IGNORECASE)
     QUOTED_STRING_RE = re.compile(r"'[^']*'")
-    FILTER_MATCH_RE = re.compile(r"^(\w+)\s*(?:(=|!=|<>|>|<|>=|<=)\s*)?(.+)$")
+    # Alternatives are ordered longest-first so '>=' is not consumed as '>',
+    # which would leave the '=' stranded at the front of the filter value.
+    # The word operators are matched case-insensitively.
+    FILTER_MATCH_RE = re.compile(
+        r"^(\w+)\s*(?:((?i:not\s+in|in)|>=|<=|!=|<>|=|>|<)\s*)?(.+)$"
+    )
     PARAMETER_RE = re.compile(r"^(@?\w+)\s*=\s*(\w+)$")
     WHEN_CONDITION_RE = re.compile(r"^(\w+)\s+(=|!=|<>|>=|<=|>|<)\s+(.+?)\s*=>\s*(.+)$")
 
@@ -576,7 +581,8 @@ class ExcelReader:
             )
 
     def _parse_operator(self, op: str) -> str:
-        op = op.strip()
+        # Collapse "NOT  IN" and similar spellings to a single canonical form
+        op = " ".join(op.split()).lower() if op else "="
         if op == ">":
             return "&gt;"
         if op == "<":
@@ -585,7 +591,10 @@ class ExcelReader:
             return "&gt;="
         if op == "<=":
             return "&lt;="
-        if op in {"=", "!=", "<>"}:
+        if op == "<>":
+            # '<' is not legal inside an XML attribute value
+            return "&lt;&gt;"
+        if op in {"=", "!=", "in", "not in"}:
             return op
         return "="
 

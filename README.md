@@ -382,6 +382,47 @@ empty_message:No eligible mothers found in this household
 - `<` (less than)
 - `>=` (greater than or equal)
 - `<=` (less than or equal)
+- `in` (value is in a comma-separated list)
+- `not in` (value is not in a comma-separated list)
+
+**Excluding options already used elsewhere (`in` / `not in`):**
+
+These operators treat the filter value as a **comma-separated list**, so a single
+placeholder can include or exclude several rows at once. The list normally comes from
+an `automatic` field that queries the database.
+
+A worked example — offering only the household members who have not already been
+recorded as sleeping under an earlier net:
+
+```
+FieldName: used_linenums   (QuestionType: automatic, FieldType: text)
+Responses:
+calc:query
+sql:SELECT group_concat(sleptunder) FROM nets WHERE hhid = @hhid AND netnum != @netnum AND sleptunder IS NOT NULL
+param:@hhid = hhid
+param:@netnum = netnum
+```
+
+```
+FieldName: sleptunder   (QuestionType: checkbox, FieldType: text)
+Responses:
+source:database
+table:hh_members
+filter:hhid = [[hhid]]
+filter:linenum not in [[used_linenums]]
+display:participantsname
+value:linenum
+```
+
+**Notes:**
+- The field supplying the list must appear **before** the question that filters on it.
+- An **empty list is safe**: `not in` with nothing to exclude offers every row, and `in`
+  with an empty list offers none. This is the normal case for the first record of a
+  repeating section.
+- Checkbox answers are stored comma-separated, so `group_concat` over several records
+  flattens correctly (`"2"` + `"3,4"` → `"2,3,4"`).
+- Use `!=` rather than `<>` inside `sql:` — the SQL is written to the XML **without
+  escaping**, and `<` would produce an invalid XML file. Keep the SQL on one line.
 
 **Filter Value Placeholders:**
 Use `[[fieldname]]` to reference values from previous questions:
