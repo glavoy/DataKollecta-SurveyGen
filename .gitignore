@@ -217,3 +217,4 @@ sample_outputs/
 # Local configuration (copy config.sample.json to config.json and edit)
 config.json
 /workshop_kit/
+config_r21.json
