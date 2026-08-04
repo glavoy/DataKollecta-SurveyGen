@@ -1514,6 +1514,28 @@ ERROR - LogicCheck: FieldName 'confirm_age' in worksheet 'enrollment_dd' has inv
 
 ### Common Validation Errors
 
+#### Silent-Failure Checks
+
+These catch mistakes that produce a valid-looking XML file but broken data collection:
+
+- **Automatic field with no calculation**: an `automatic` question whose `Responses`
+  column is blank, or holds response options instead of a `calc:` block, is never given a
+  value. Any skip that tests it then **fails open** — a skip whose field is unanswered
+  never fires, so the question it was meant to guard is asked of everyone. Exempt:
+  built-in fields (`starttime`, `startdate`, `stoptime`, `uniqueid`, `swver`, `survey_id`,
+  `lastmod`) and fields the manifest supplies (`linkingfield`, `incrementfield`,
+  `primarykey`, and `idconfig` parts).
+- **Selection question with no responses**: a `radio`, `checkbox`, or `combobox` with an
+  empty `Responses` column cannot be answered at all — the interviewer reaches a question
+  with nothing to select. Add options, or a `source:csv` / `source:database` block.
+- **Preskip that tests its own field**: preskips run *before* the question is shown, so on
+  a new record the field is still unanswered and the skip never fires. On an existing
+  record the stored value *does* fire it, and the jump clears every answer it passes over
+  — including that question's own. Use a `postskip` instead.
+- **MaxCharacters on a selection question** *(warning)*: only typed input is length-limited,
+  so `MaxCharacters` on a `radio`/`checkbox`/`combobox` is ignored. Usually a sign the
+  QuestionType should have been `text`.
+
 #### FieldName Errors
 - **Starts with number**: Field names must start with a letter
 - **Not lowercase**: All field names must be lowercase

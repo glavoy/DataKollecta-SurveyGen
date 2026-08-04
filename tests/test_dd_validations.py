@@ -1,0 +1,214 @@
+import unittest
+
+from openpyxl import Workbook
+
+from excel_reader import ExcelReader
+
+
+HEADERS = [
+    "FieldName",
+    "QuestionType",
+    "FieldType",
+    "QuestionText",
+    "MaxCharacters",
+    "Responses",
+    "LowerRange",
+    "UpperRange",
+    "LogicCheck",
+    "DontKnow",
+    "Refuse",
+    "NA",
+    "Skip",
+    "Comments",
+]
+
+
+def row(fieldname, qtype, ftype, text="Question text", maxchars="", responses="", skip=""):
+    return [fieldname, qtype, ftype, text, maxchars, responses, "", "", "", "", "", "", skip, ""]
+
+
+def read(rows, supplied=None):
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "demo_dd"
+    worksheet.append(HEADERS)
+    for r in rows:
+        worksheet.append(r)
+    reader = ExcelReader(supplied_auto_fields=supplied)
+    reader.create_question_list(worksheet)
+    return reader
+
+
+def errors(reader):
+    return [line for line in reader.logstring if line.startswith("ERROR")]
+
+
+def warnings(reader):
+    return [line for line in reader.logstring if line.startswith("WARNING")]
+
+
+class AutomaticNeedsCalculationTests(unittest.TestCase):
+    """An automatic field with no calculation is never given a value, and any
+    skip that tests it then fails open."""
+
+    def test_blank_responses_is_an_error(self):
+        reader = read([row("region", "automatic", "integer")])
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("has no calculation (the Responses column is blank)", errors(reader)[0])
+
+    def test_response_options_instead_of_a_calc_block_is_an_error(self):
+        # The Responses column on an automatic question must hold a calculation;
+        # an option list there is silently ignored at runtime.
+        reader = read([row("feverortemp", "automatic", "integer", responses="1:Yes\n0:No")])
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("does not start with 'calc:'", errors(reader)[0])
+
+    def test_a_calc_block_is_accepted(self):
+        reader = read(
+            [row("total", "automatic", "integer", responses="calc:constant\nvalue:1")]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_built_in_automatic_fields_are_exempt(self):
+        reader = read(
+            [
+                row("starttime", "automatic", "datetime"),
+                row("startdate", "automatic", "date"),
+                row("uniqueid", "automatic", "text"),
+                row("lastmod", "automatic", "datetime"),
+                row("swver", "automatic", "text"),
+                row("survey_id", "automatic", "text"),
+                row("stoptime", "automatic", "datetime"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_fields_supplied_by_the_manifest_are_exempt(self):
+        # hhid and linenum come from the crfs linking/increment fields.
+        reader = read(
+            [
+                row("hhid", "automatic", "integer"),
+                row("linenum", "automatic", "integer"),
+            ],
+            supplied={"hhid", "linenum"},
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_an_unsupplied_field_is_still_reported(self):
+        reader = read(
+            [
+                row("hhid", "automatic", "integer"),
+                row("region", "automatic", "integer"),
+            ],
+            supplied={"hhid"},
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertEqual(len(errors(reader)), 1)
+        self.assertIn("'region'", errors(reader)[0])
+
+
+class AnswerableResponsesTests(unittest.TestCase):
+    """A selection question with no options cannot be answered."""
+
+    def test_radio_with_no_responses_is_an_error(self):
+        reader = read([row("memberstructure", "radio", "integer")])
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("cannot be answered", errors(reader)[0])
+
+    def test_checkbox_with_no_responses_is_an_error(self):
+        reader = read([row("symptoms", "checkbox", "text")])
+
+        self.assertTrue(reader.errorsEncountered)
+
+    def test_static_options_are_accepted(self):
+        reader = read([row("sex", "radio", "integer", responses="1:Male\n2:Female")])
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_database_source_is_accepted(self):
+        reader = read(
+            [
+                row(
+                    "memberstructure",
+                    "radio",
+                    "integer",
+                    responses="source:database\ntable:sleeping_structure\n"
+                    "display:structurelabel\nvalue:structurenum",
+                )
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_text_question_needs_no_responses(self):
+        reader = read([row("comments", "text", "text", maxchars="80")])
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+
+class SelfReferencingPreskipTests(unittest.TestCase):
+    """A preskip cannot test the answer to its own question."""
+
+    def test_preskip_on_its_own_field_is_an_error(self):
+        reader = read(
+            [
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="preskip: if everhung = 0, skip to netshape"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("tests its own field", errors(reader)[0])
+
+    def test_postskip_on_its_own_field_is_correct(self):
+        reader = read(
+            [
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if everhung = 0, skip to netshape"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_preskip_on_an_earlier_field_is_correct(self):
+        reader = read(
+            [
+                row("obs", "radio", "integer", responses="1:Yes\n0:No"),
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="preskip: if obs = 1, skip to netshape"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+
+class MaxCharactersWarningTests(unittest.TestCase):
+    """MaxCharacters only affects typed input."""
+
+    def test_max_characters_on_a_radio_warns(self):
+        reader = read(
+            [row("mthfcty", "radio", "integer", maxchars="10", responses="1:Car\n2:Bus")]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+        self.assertEqual(len(warnings(reader)), 1)
+        self.assertIn("MaxCharacters is ignored", warnings(reader)[0])
+
+    def test_max_characters_on_a_text_question_is_silent(self):
+        reader = read([row("comments", "text", "text", maxchars="80")])
+
+        self.assertEqual(warnings(reader), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

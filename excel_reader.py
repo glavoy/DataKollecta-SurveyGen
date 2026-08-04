@@ -72,15 +72,28 @@ class ExcelReader:
         "n/a",
         "hourmin",
     }
-    BUILT_IN_AUTO_FIELDS = {"starttime", "stoptime", "uniqueid", "swver", "survey_id", "lastmod"}
+    # Fields the survey app computes itself; they never need a calculation.
+    BUILT_IN_AUTO_FIELDS = {
+        "starttime",
+        "startdate",
+        "stoptime",
+        "uniqueid",
+        "swver",
+        "survey_id",
+        "lastmod",
+    }
     # Word operators are excluded from field-reference validation.
     LOGIC_KEYWORDS = {"and", "or", "not", "contains", "does", "contain"}
 
-    def __init__(self) -> None:
+    def __init__(self, supplied_auto_fields: set[str] | None = None) -> None:
         self.logstring: list[str] = []
         self.errorsEncountered = False
         self.worksheetErrorsEncountered = False
         self.questionList: list[Question] = []
+        # Automatic fields the manifest fills in (linking field, increment
+        # field, primary key, idconfig parts). They legitimately have no
+        # calculation, so they are exempt from the calculation check.
+        self.suppliedAutoFields = {f.lower() for f in (supplied_auto_fields or set())}
 
     def create_question_list(self, worksheet: Worksheet) -> list[Question]:
         self.worksheetErrorsEncountered = False
@@ -219,6 +232,10 @@ class ExcelReader:
             self._check_skip_to_field_names(worksheet.title)
             self._check_required_max_characters(worksheet.title)
             self._check_duplicate_columns(worksheet.title)
+            self._check_automatic_has_calculation(worksheet.title)
+            self._check_responses_are_answerable(worksheet.title)
+            self._check_preskip_does_not_test_itself(worksheet.title)
+            self._check_max_characters_is_meaningful(worksheet.title)
             if not self.worksheetErrorsEncountered:
                 self.logstring.append(f"No errors found in '{worksheet.title}'")
 
@@ -568,6 +585,86 @@ class ExcelReader:
             ):
                 self._error(
                     f"ERROR - MaxCharacters: In worksheet '{worksheet}', MaxCharacters for FieldName '{question.fieldName}' needs a value"
+                )
+
+    def _check_automatic_has_calculation(self, worksheet: str) -> None:
+        """An automatic field with no calculation is never populated.
+
+        It stays null for every record, and — worse — any skip that tests it
+        silently fails open, because a skip whose field is unanswered never
+        fires. The question it was meant to guard is then asked of everyone.
+        """
+        for question in self.questionList:
+            if question.questionType != "automatic":
+                continue
+            name = question.fieldName.lower()
+            if name in self.BUILT_IN_AUTO_FIELDS or name in self.suppliedAutoFields:
+                continue
+            if question.calculationType != CalculationType.NONE:
+                continue
+            detail = (
+                "the Responses column is blank"
+                if not question.responses.strip()
+                else "the Responses column does not start with 'calc:'"
+            )
+            self._error(
+                f"ERROR - Calculation: In worksheet '{worksheet}', automatic FieldName "
+                f"'{question.fieldName}' has no calculation ({detail}), so it is never "
+                "given a value. Add a 'calc:' block, or remove the field."
+            )
+
+    def _check_responses_are_answerable(self, worksheet: str) -> None:
+        """A selection question with no options cannot be answered at all."""
+        for question in self.questionList:
+            if question.questionType not in {"radio", "checkbox", "combobox"}:
+                continue
+            if question.responseSourceType != ResponseSourceType.STATIC:
+                continue
+            if not question.responses.strip():
+                self._error(
+                    f"ERROR - Responses: In worksheet '{worksheet}', FieldName "
+                    f"'{question.fieldName}' is a {question.questionType} question with no "
+                    "responses, so it cannot be answered. Add response options, or a "
+                    "'source:csv'/'source:database' block."
+                )
+
+    def _check_preskip_does_not_test_itself(self, worksheet: str) -> None:
+        """A preskip that tests its own field can never behave as intended.
+
+        Preskips run before the question is shown, so on a new record the field
+        is still unanswered and the skip never fires. On an existing record the
+        stored value does fire it, and the jump clears every answer it passes
+        over — including this one. Such a rule is nearly always meant to be a
+        postskip.
+        """
+        for question in self.questionList:
+            if not question.skip:
+                continue
+            for skip in self._split_lines(question.skip):
+                stripped = skip.strip()
+                if not stripped.lower().startswith("preskip"):
+                    continue
+                words = [w for w in stripped.split(" ") if w]
+                if len(words) < 4:
+                    continue
+                if words[2].strip().strip(",") == question.fieldName:
+                    self._error(
+                        f"ERROR - Skip: In worksheet '{worksheet}', the preskip for FieldName "
+                        f"'{question.fieldName}' tests its own field. It cannot fire on a new "
+                        "record, and on an existing record it erases the answer. Use a "
+                        f"postskip instead: {stripped}"
+                    )
+
+    def _check_max_characters_is_meaningful(self, worksheet: str) -> None:
+        """MaxCharacters only affects typed input; on a selection it is ignored."""
+        for question in self.questionList:
+            if question.maxCharacters == "-9":
+                continue
+            if question.questionType in {"radio", "checkbox", "combobox"}:
+                self.logstring.append(
+                    f"WARNING - MaxCharacters: In worksheet '{worksheet}', FieldName "
+                    f"'{question.fieldName}' is a {question.questionType} question, so "
+                    "MaxCharacters is ignored. Remove it, or change the QuestionType to 'text'."
                 )
 
     def _check_duplicate_columns(self, worksheet: str) -> None:

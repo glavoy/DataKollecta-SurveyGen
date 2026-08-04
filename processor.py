@@ -49,8 +49,16 @@ class GiSTXProcessor:
         try:
             worksheets = [ws for ws in workbook.worksheets if ws.title.endswith("_dd") or ws.title.endswith("_xml")]
 
+            # Read the crfs sheet first: it tells us which automatic fields the
+            # manifest fills in (linking field, increment field, primary key,
+            # idconfig parts), so they are not reported as missing a calculation.
+            crfs_ws = workbook["crfs"] if "crfs" in workbook.sheetnames else None
+            crfs = CrfReader.read_crfs_worksheet(crfs_ws) if crfs_ws is not None else []
+            supplied_by_table = self._supplied_auto_fields(crfs)
+
             for ws in worksheets:
-                reader = ExcelReader()
+                table = ws.title.replace("_dd", "").replace("_xml", "")
+                reader = ExcelReader(supplied_auto_fields=supplied_by_table.get(table, set()))
                 qlist = reader.create_question_list(ws)
                 if reader.errorsEncountered:
                     self.errorsEncountered = True
@@ -71,11 +79,6 @@ class GiSTXProcessor:
                     if not self._validate_xml_syntax(xml_path):
                         self.errorsEncountered = True
                     self.generated_files.append(xml_path)
-
-                crfs = []
-                crfs_ws = workbook["crfs"] if "crfs" in workbook.sheetnames else None
-                if crfs_ws is not None:
-                    crfs = CrfReader.read_crfs_worksheet(crfs_ws)
 
                 manifest = SurveyManifest(
                     surveyName=self.config.surveyName,
@@ -116,6 +119,31 @@ class GiSTXProcessor:
             return 1 if self.errorsEncountered else 0
         finally:
             workbook.close()
+
+    @staticmethod
+    def _supplied_auto_fields(crfs: list) -> dict[str, set[str]]:
+        """Automatic fields the app fills in from the manifest, per table.
+
+        These are populated at runtime from the crfs entry rather than by a
+        calculation, so they must not be reported as missing one.
+        """
+        supplied: dict[str, set[str]] = {}
+        for crf in crfs:
+            if not crf.tablename:
+                continue
+            fields: set[str] = set()
+            for key in (crf.linkingfield, crf.incrementfield):
+                if key:
+                    fields.add(key.strip())
+            for key in (crf.primarykey or "").split(","):
+                if key.strip():
+                    fields.add(key.strip())
+            if crf.idconfig and crf.idconfig.fields:
+                for f in crf.idconfig.fields:
+                    if f.name:
+                        fields.add(f.name.strip())
+            supplied[crf.tablename] = fields
+        return supplied
 
     def _validate_xml_syntax(self, file_path: Path) -> bool:
         try:
