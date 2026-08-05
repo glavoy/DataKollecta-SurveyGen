@@ -591,6 +591,32 @@ when:age >= 18 => Adult
 else:Unknown
 ```
 
+**A `when` is one comparison** — `field operator value => result`. There is no
+`and`, `or` or bracketing. Conditions are tested in order and the first match
+wins, which is how you build an AND: test for each *failure* and let `else`
+carry the success.
+
+```
+calc:case
+when:sex != 1 => 0
+when:consented != 1 => 0
+else:1
+```
+
+For an OR, give the group its own automatic field and test that field instead.
+
+**Notes**
+
+- Operators: `=`, `!=`, `<>`, `>`, `<`, `>=`, `<=`. `<>` and `!=` mean the same
+  thing.
+- Put spaces around the operator — `when:age>=18 => 1` is rejected.
+- Do not quote values. `when:sex = "1"` compares against a three-character
+  string and never matches.
+- A field with no answer does not match a numeric comparison, so an inverted
+  condition such as `when:sex != 1 => 0` fires — the calculation fails safe.
+- The field is computed when navigation reaches it, so it must sit **below**
+  every field it reads.
+
 #### 7. Age From Date
 Calculates age in years based on a date field.
 

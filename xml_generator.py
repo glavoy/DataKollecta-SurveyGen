@@ -297,13 +297,24 @@ class XmlGenerator:
 
     @staticmethod
     def _convert_operator_to_xml(op: str) -> str:
+        """Escape a `when` condition's operator for the XML attribute.
+
+        `<>` becomes `!=` rather than `&lt;&gt;`. Every other evaluator in the
+        app accepts both spellings, but the one that runs case calculations
+        knows only `!=`, so a `<>` written here would never match and the
+        calculation would quietly return the wrong value. Normalizing keeps
+        `<>` meaning what it means everywhere else in a data dictionary.
+        """
         op = op.strip()
-        return {
+        converted = {
             "=": "=",
             "!=": "!=",
-            "<>": "&lt;&gt;",
+            "<>": "!=",
             ">": "&gt;",
             "<": "&lt;",
             ">=": "&gt;=",
             "<=": "&lt;=",
-        }.get(op, "=")
+        }.get(op)
+        if converted is None:
+            raise ValueError(f"Unsupported operator in a when condition: {op!r}")
+        return converted
