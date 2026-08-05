@@ -15,28 +15,16 @@ from enum import Enum
 # end-of-survey screen: navigation stops there, so anything after it is never
 # computed and would be saved empty.
 LEADING_SYSTEM_FIELDS: tuple[tuple[str, str], ...] = (
-    ("starttime", "datetime"),
-    ("startdate", "date"),
+    ("starttime", "datetime"),  # when the interview was started
+    ("startdate", "date"),      # the date it was started
 )
 TRAILING_SYSTEM_FIELDS: tuple[tuple[str, str], ...] = (
-    ("uniqueid", "text"),
-    ("swver", "text"),
-    ("survey_id", "text"),
-    ("lastmod", "datetime"),
-    ("stoptime", "datetime"),
+    ("uniqueid", "text"),       # unique identifier generated for the record
+    ("swver", "text"),          # version of the app that collected it
+    ("survey_id", "text"),      # the survey the record belongs to
+    ("lastmod", "datetime"),    # when the record was last modified
+    ("stoptime", "datetime"),   # when the interview was saved
 )
-
-# What each one records, used to explain the warning when a dictionary declares
-# one of them.
-SYSTEM_FIELD_PURPOSE: dict[str, str] = {
-    "starttime": "the date and time the interview was started",
-    "startdate": "the date the interview was started",
-    "stoptime": "the date and time the interview was saved",
-    "lastmod": "the date and time the record was last modified",
-    "uniqueid": "a unique identifier generated for the record",
-    "swver": "the version of the app that collected the record",
-    "survey_id": "the identifier of the survey the record belongs to",
-}
 
 RESERVED_SYSTEM_FIELDS: frozenset[str] = frozenset(
     name for name, _ in LEADING_SYSTEM_FIELDS + TRAILING_SYSTEM_FIELDS

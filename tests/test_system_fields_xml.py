@@ -133,7 +133,7 @@ class DeclaredSystemFieldsTests(unittest.TestCase):
         self.assertFalse(reader.errorsEncountered)
         warnings = [l for l in reader.logstring if l.startswith("WARNING")]
         self.assertEqual(len(warnings), 1)
-        self.assertIn("not written to the XML", warnings[0])
+        self.assertIn("this row is ignored", warnings[0])
 
 
 class OtherAutomaticFieldsAreUntouchedTests(unittest.TestCase):

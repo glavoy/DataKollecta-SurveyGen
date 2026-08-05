@@ -8,7 +8,6 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from models import (
     RESERVED_SYSTEM_FIELDS,
-    SYSTEM_FIELD_PURPOSE,
     CalculationParameter,
     CalculationPart,
     CalculationType,
@@ -85,7 +84,6 @@ class ExcelReader:
     # positions that make them correct, so they never need a calculation and a
     # declared row is dropped rather than passed through. See models.py.
     BUILT_IN_AUTO_FIELDS = RESERVED_SYSTEM_FIELDS
-    RESERVED_AUTOMATIC_FIELDS = SYSTEM_FIELD_PURPOSE
     # Word operators are excluded from field-reference validation.
     LOGIC_KEYWORDS = {"and", "or", "not", "contains", "does", "contain"}
 
@@ -619,10 +617,11 @@ class ExcelReader:
     def _check_reserved_automatic_fields(self, worksheet: str) -> None:
         """Point out reserved variables, without ever failing the build.
 
-        These names have built-in meaning in the app. Declaring one is
-        perfectly valid — many dictionaries do, so the variable is visible to
-        analysts reading the spreadsheet — so this only ever warns, and every
-        dictionary written before these names were reserved keeps working.
+        Declaring one is perfectly valid — many dictionaries do, so the
+        variable is visible to analysts reading the spreadsheet. The row itself
+        is dropped and the generator writes the variable in the position that
+        makes it correct, so this only ever warns and every dictionary written
+        before these names were reserved keeps working.
 
         Giving one a calculation is worth calling out separately: the
         calculation is dropped rather than written to the XML, so an author who
@@ -630,29 +629,21 @@ class ExcelReader:
         """
         for question in self.questionList:
             name = question.fieldName.lower()
-            purpose = self.RESERVED_AUTOMATIC_FIELDS.get(name)
-            if purpose is None:
+            if name not in self.BUILT_IN_AUTO_FIELDS:
                 continue
 
             if name in self.reservedFieldsWithCalculation:
                 self.logstring.append(
                     f"WARNING - Reserved variable: In worksheet '{worksheet}', "
-                    f"'{question.fieldName}' is a reserved automatic variable "
-                    f"({purpose}) and has been given a calculation. The "
-                    "calculation is IGNORED — the app supplies this value "
-                    "itself. Remove the calculation, or use a different "
-                    "FieldName if you need your own value."
+                    f"'{question.fieldName}' is reserved and its calculation is "
+                    "ignored. Use a different FieldName for your own value."
                 )
                 continue
 
             self.logstring.append(
                 f"WARNING - Reserved variable: In worksheet '{worksheet}', "
-                f"'{question.fieldName}' is a reserved automatic variable — "
-                f"{purpose}. This row is not written to the XML: the generator "
-                "adds the variable itself, in the position where it records the "
-                "right moment, so its placement here does not matter. Keeping "
-                "the row is fine — it documents the variable for whoever "
-                "analyses the data."
+                f"'{question.fieldName}' is reserved. The generator writes it "
+                "itself, in the correct position; this row is ignored."
             )
 
     def _check_automatic_has_calculation(self, worksheet: str) -> None:

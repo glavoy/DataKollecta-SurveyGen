@@ -246,8 +246,8 @@ class ReservedAutomaticFieldTests(unittest.TestCase):
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
         warning = "\n".join(warnings(reader))
         self.assertIn("starttime", warning)
-        self.assertIn("reserved automatic variable", warning)
-        self.assertIn("the date and time the interview was started", warning)
+        self.assertIn("is reserved", warning)
+        self.assertIn("this row is ignored", warning)
 
     def test_every_reserved_name_is_covered(self):
         names = ["starttime", "startdate", "stoptime", "lastmod",
@@ -266,7 +266,7 @@ class ReservedAutomaticFieldTests(unittest.TestCase):
         )
 
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
-        self.assertIn("IGNORED", "\n".join(warnings(reader)))
+        self.assertIn("calculation is ignored", "\n".join(warnings(reader)))
         self.assertEqual(len(warnings(reader)), 1)
 
     def test_an_ordinary_field_is_not_flagged(self):
