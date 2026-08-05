@@ -256,10 +256,15 @@ never need a `calc:` block, responses or validation:
 | `swver` | the version of the app that collected the record |
 | `survey_id` | the identifier of the survey the record belongs to |
 
-**Declaring them is never an error.** The generator logs a warning and carries on, so
-every dictionary written before these names were reserved keeps working unchanged. Keep
-the rows if you want the variables visible to whoever analyses the data — that is a
-perfectly good reason to leave them in.
+**The generator writes these into every questionnaire itself**, in the positions where
+they record the right moment: `starttime` and `startdate` before the first question, and
+the rest after the last one but ahead of the end-of-survey screen. You never have to
+declare them, and forgetting one can no longer produce a questionnaire that is missing it.
+
+**Declaring them is never an error.** The generator logs a warning, drops the declared
+row and writes its own, so it does not matter where in the spreadsheet you put them and a
+questionnaire can never end up with two. Keep the rows if you want the variables visible
+to whoever analyses the data — that is a perfectly good reason to leave them in.
 
 The one thing to avoid is giving a reserved variable a `calc:` block: the calculation is
 **dropped**, not applied, because the app supplies the value itself. The generator warns
@@ -1579,9 +1584,10 @@ These catch mistakes that produce a valid-looking XML file but broken data colle
   so `MaxCharacters` on a `radio`/`checkbox`/`combobox` is ignored. Usually a sign the
   QuestionType should have been `text`.
 - **Reserved automatic variable declared** *(warning)*: a FieldName such as `starttime` has
-  built-in meaning and the app supplies its value. Never an error — the row can stay. A
-  `calc:` block on one is called out separately, because the calculation is dropped rather
-  than applied.
+  built-in meaning. The generator writes it into the questionnaire itself, in the correct
+  position, and drops the declared row — so the placement in the spreadsheet does not
+  matter and there can never be two. Never an error; the row can stay. A `calc:` block on
+  one is called out separately, because the calculation is dropped rather than applied.
 
 #### FieldName Errors
 - **Starts with number**: Field names must start with a letter

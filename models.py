@@ -4,6 +4,45 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+# ── Reserved system variables ────────────────────────────────────────────────
+# Every questionnaire records these, and the generator writes them itself, so a
+# data dictionary never has to declare them.
+#
+# The order is not cosmetic. The survey app computes an automatic question when
+# navigation *reaches* it, so `starttime` has to come before the first real
+# question or it would record when the interviewer finished, and `stoptime` has
+# to come after the last one. The trailing group also has to stay ahead of the
+# end-of-survey screen: navigation stops there, so anything after it is never
+# computed and would be saved empty.
+LEADING_SYSTEM_FIELDS: tuple[tuple[str, str], ...] = (
+    ("starttime", "datetime"),
+    ("startdate", "date"),
+)
+TRAILING_SYSTEM_FIELDS: tuple[tuple[str, str], ...] = (
+    ("uniqueid", "text"),
+    ("swver", "text"),
+    ("survey_id", "text"),
+    ("lastmod", "datetime"),
+    ("stoptime", "datetime"),
+)
+
+# What each one records, used to explain the warning when a dictionary declares
+# one of them.
+SYSTEM_FIELD_PURPOSE: dict[str, str] = {
+    "starttime": "the date and time the interview was started",
+    "startdate": "the date the interview was started",
+    "stoptime": "the date and time the interview was saved",
+    "lastmod": "the date and time the record was last modified",
+    "uniqueid": "a unique identifier generated for the record",
+    "swver": "the version of the app that collected the record",
+    "survey_id": "the identifier of the survey the record belongs to",
+}
+
+RESERVED_SYSTEM_FIELDS: frozenset[str] = frozenset(
+    name for name, _ in LEADING_SYSTEM_FIELDS + TRAILING_SYSTEM_FIELDS
+)
+
+
 class ResponseSourceType(str, Enum):
     STATIC = "Static"
     CSV = "Csv"

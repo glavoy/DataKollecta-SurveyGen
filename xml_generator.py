@@ -3,7 +3,15 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from models import CalculationPart, CalculationType, Question, ResponseSourceType
+from models import (
+    LEADING_SYSTEM_FIELDS,
+    RESERVED_SYSTEM_FIELDS,
+    TRAILING_SYSTEM_FIELDS,
+    CalculationPart,
+    CalculationType,
+    Question,
+    ResponseSourceType,
+)
 
 # The Windows app writes files with .NET StreamWriter on Windows: every WriteLine
 # ends with CRLF, and WriteLine("\n") emits "\n\r\n". NEWLINE/BLANK_LINE reproduce
@@ -28,11 +36,29 @@ class XmlGenerator:
             def wl(line: str = "") -> None:
                 f.write(line + NEWLINE)
 
+            def write_system_question(fieldname: str, fieldtype: str) -> None:
+                wl(
+                    f"\t<question type = 'automatic' fieldname = '{fieldname}' "
+                    f"fieldtype = '{fieldtype}'>"
+                )
+                wl("\t</question>")
+                f.write(BLANK_LINE)
+
             wl("<?xml version = '1.0' encoding = 'utf-8'?>")
             wl("<survey>")
             f.write(BLANK_LINE)
 
+            # Written here rather than wherever the dictionary happened to
+            # declare them, so they always record the right moment.
+            for fieldname, fieldtype in LEADING_SYSTEM_FIELDS:
+                write_system_question(fieldname, fieldtype)
+
             for q in question_list:
+                # Supplied above and below; a declared row is dropped so the
+                # questionnaire cannot end up with two of them.
+                if q.fieldName.lower() in RESERVED_SYSTEM_FIELDS:
+                    continue
+
                 wl(f"\t<question type = '{q.questionType}' fieldname = '{q.fieldName}' fieldtype = '{q.fieldType}'>")
 
                 if q.questionType != "automatic":
@@ -132,6 +158,11 @@ class XmlGenerator:
 
                 wl("\t</question>")
                 f.write(BLANK_LINE)
+
+            # Ahead of the end-of-survey screen: navigation stops on that
+            # screen, so anything after it is never computed.
+            for fieldname, fieldtype in TRAILING_SYSTEM_FIELDS:
+                write_system_question(fieldname, fieldtype)
 
             wl("\t<question type = 'information' fieldname = 'end_of_questions' fieldtype = 'n/a'>")
             wl("\t\t<text>Press the 'Finish' button to save the data.</text >")

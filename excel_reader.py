@@ -7,6 +7,8 @@ from typing import Any
 from openpyxl.worksheet.worksheet import Worksheet
 
 from models import (
+    RESERVED_SYSTEM_FIELDS,
+    SYSTEM_FIELD_PURPOSE,
     CalculationParameter,
     CalculationPart,
     CalculationType,
@@ -79,29 +81,11 @@ class ExcelReader:
         "n/a",
         "hourmin",
     }
-    # Fields the survey app computes itself; they never need a calculation.
-    BUILT_IN_AUTO_FIELDS = {
-        "starttime",
-        "startdate",
-        "stoptime",
-        "uniqueid",
-        "swver",
-        "survey_id",
-        "lastmod",
-    }
-
-    # The same fields, with what each one records. These names are reserved:
-    # the app has built-in behaviour for them, so declaring one is never an
-    # error but is worth pointing out.
-    RESERVED_AUTOMATIC_FIELDS = {
-        "starttime": "the date and time the interview was started",
-        "startdate": "the date the interview was started",
-        "stoptime": "the date and time the interview was saved",
-        "lastmod": "the date and time the record was last modified",
-        "uniqueid": "a unique identifier generated for the record",
-        "swver": "the version of the app that collected the record",
-        "survey_id": "the identifier of the survey the record belongs to",
-    }
+    # Reserved system variables. The generator writes these itself, in the
+    # positions that make them correct, so they never need a calculation and a
+    # declared row is dropped rather than passed through. See models.py.
+    BUILT_IN_AUTO_FIELDS = RESERVED_SYSTEM_FIELDS
+    RESERVED_AUTOMATIC_FIELDS = SYSTEM_FIELD_PURPOSE
     # Word operators are excluded from field-reference validation.
     LOGIC_KEYWORDS = {"and", "or", "not", "contains", "does", "contain"}
 
@@ -664,9 +648,11 @@ class ExcelReader:
             self.logstring.append(
                 f"WARNING - Reserved variable: In worksheet '{worksheet}', "
                 f"'{question.fieldName}' is a reserved automatic variable — "
-                f"{purpose}. The app fills this in on its own, so it needs no "
-                "calculation, responses or validation. Keeping the row is fine; "
-                "it documents the variable for whoever analyses the data."
+                f"{purpose}. This row is not written to the XML: the generator "
+                "adds the variable itself, in the position where it records the "
+                "right moment, so its placement here does not matter. Keeping "
+                "the row is fine — it documents the variable for whoever "
+                "analyses the data."
             )
 
     def _check_automatic_has_calculation(self, worksheet: str) -> None:
