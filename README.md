@@ -1430,7 +1430,7 @@ parent form. For one-off sister forms, leave them blank.
 
 | FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | NA | Skip | Comments |
 |-----------|-------------|-----------|--------------|---------------|-----------|------------|------------|------------|----------|--------|----|----|----------|
-| participant_id | text | text_id | Enter participant ID | 20 | | | | unique; 'This ID has already been used in the database!' | False | False | False | | Must be unique |
+| participant_id | text | text | Enter participant ID | 20 | | | | unique; 'This ID has already been used in the database!' | False | False | False | | Must be unique |
 
 ---
 
@@ -1613,11 +1613,12 @@ These catch mistakes that produce a valid-looking XML file but broken data colle
 
 #### QuestionType/FieldType Errors
 - **Invalid QuestionType**: Must be one of: radio, checkbox, combobox, text, date, information, automatic, button
-- **Invalid FieldType**: Must be one of: text, integer, text_integer, text_decimal, text_id, phone_num, date, datetime, hourmin, n/a
+- **Invalid FieldType**: Must be one of: text, integer, text_integer, text_decimal, date, datetime, hourmin, n/a
 - **Mismatched types**:
   - Radio must use integer fieldtype
   - Checkbox must use text fieldtype
   - Date must use date or datetime fieldtype
+  - Text must use text, text_integer, text_decimal or hourmin fieldtype
 
 #### Response Errors
 - **Missing colon**: Static responses must be in format `value:text`
@@ -1645,11 +1646,15 @@ These catch mistakes that produce a valid-looking XML file but broken data colle
 - **Non-numeric range**: LowerRange and UpperRange must be numbers for numeric fields
 - **Invalid date format**: Date ranges must use format like `+1y`, `-30d`, `0`
 - **Missing date range**: Date questions must have both LowerRange and UpperRange defined
+- **Half-set range**: Setting one of LowerRange/UpperRange and leaving the other blank writes `maxvalue='-9'`, which rejects every answer — set both or neither
+- **Range on a time**: `hourmin` fields cannot have a range
+- **No range (warning)**: A `text_integer` or `text_decimal` field with no range accepts any value that fits MaxCharacters; not warned when the length is fixed (`=10`), which means an identifier
 
 #### MaxCharacters Errors
 - **Non-numeric value**: MaxCharacters must be a number
 - **Out of range**: MaxCharacters must be between 1 and 2000
-- **Missing for text fields**: Required for text, text_integer, and phone_num field types
+- **Missing for text fields**: Required for every question whose QuestionType is `text`
+- **Wrong length for a time**: `hourmin` must use `=5`
 
 ### Validation Process
 
