@@ -13,6 +13,7 @@ A tool for generating XML configuration files and survey manifests from Excel-ba
   - [Column Specifications](#column-specifications)
     - [FieldName](#fieldname)
     - [QuestionType](#questiontype)
+    - [Reserved Automatic Variables](#reserved-automatic-variables)
     - [FieldType](#fieldtype)
     - [QuestionText](#questiontext)
     - [MaxCharacters](#maxcharacters)
@@ -221,6 +222,48 @@ The type of question/input control.
 - `checkbox` must have `fieldtype` = `text`
 - `date` must have `fieldtype` = `date` or `datetime`
 - `radio`, `checkbox`, and `combobox` must have responses defined
+
+**Spellings of `automatic`:** `calc`, `calculation` and `calculated` all mean the same
+thing as `automatic` and can be used interchangeably. They are normalised to `automatic`
+in the generated XML, so a dictionary written either way produces a file that every
+version of the app can read.
+
+The spelling never decides what the field does. That is determined by:
+
+| What the app finds | What it does |
+|---|---|
+| the FieldName is a reserved automatic variable (see below) | records the built-in value |
+| the question has a `calc:` block | runs the calculation |
+| neither, and the form's `idconfig` is set | generates the ID (e.g. `subjid`, `hhid`) |
+
+Pick whichever spelling reads best — `calculation` for formula fields and `automatic`
+for system and ID fields is a reasonable convention, but nothing enforces it.
+
+---
+
+### Reserved Automatic Variables
+
+These FieldNames have built-in meaning. The app records their values itself, so they
+never need a `calc:` block, responses or validation:
+
+| FieldName | What it records |
+|-----------|-----------------|
+| `starttime` | the date and time the interview was started |
+| `startdate` | the date the interview was started |
+| `stoptime` | the date and time the interview was saved |
+| `lastmod` | the date and time the record was last modified |
+| `uniqueid` | a unique identifier generated for the record |
+| `swver` | the version of the app that collected the record |
+| `survey_id` | the identifier of the survey the record belongs to |
+
+**Declaring them is never an error.** The generator logs a warning and carries on, so
+every dictionary written before these names were reserved keeps working unchanged. Keep
+the rows if you want the variables visible to whoever analyses the data — that is a
+perfectly good reason to leave them in.
+
+The one thing to avoid is giving a reserved variable a `calc:` block: the calculation is
+**dropped**, not applied, because the app supplies the value itself. The generator warns
+when this happens. If you need a value of your own, use a different FieldName.
 
 ---
 
@@ -1535,6 +1578,10 @@ These catch mistakes that produce a valid-looking XML file but broken data colle
 - **MaxCharacters on a selection question** *(warning)*: only typed input is length-limited,
   so `MaxCharacters` on a `radio`/`checkbox`/`combobox` is ignored. Usually a sign the
   QuestionType should have been `text`.
+- **Reserved automatic variable declared** *(warning)*: a FieldName such as `starttime` has
+  built-in meaning and the app supplies its value. Never an error — the row can stay. A
+  `calc:` block on one is called out separately, because the calculation is dropped rather
+  than applied.
 
 #### FieldName Errors
 - **Starts with number**: Field names must start with a letter

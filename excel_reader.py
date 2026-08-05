@@ -50,6 +50,13 @@ class ExcelReader:
     PARAMETER_RE = re.compile(r"^(@?\w+)\s*=\s*(\w+)$")
     WHEN_CONDITION_RE = re.compile(r"^(\w+)\s+(=|!=|<>|>=|<=|>|<)\s+(.+?)\s*=>\s*(.+)$")
 
+    # Spellings of "automatic". A question's behaviour is decided by its
+    # fieldname (reserved variables), by whether it has a calculation, or by
+    # the CRF's idconfig — never by which of these words was used. They are
+    # normalized to "automatic" on the way in, so the generated XML always uses
+    # the one spelling every app build understands.
+    AUTOMATIC_TYPE_ALIASES = {"calc", "calculation", "calculated"}
+
     VALID_QUESTION_TYPES = {
         "radio",
         "combobox",
@@ -82,6 +89,19 @@ class ExcelReader:
         "survey_id",
         "lastmod",
     }
+
+    # The same fields, with what each one records. These names are reserved:
+    # the app has built-in behaviour for them, so declaring one is never an
+    # error but is worth pointing out.
+    RESERVED_AUTOMATIC_FIELDS = {
+        "starttime": "the date and time the interview was started",
+        "startdate": "the date the interview was started",
+        "stoptime": "the date and time the interview was saved",
+        "lastmod": "the date and time the record was last modified",
+        "uniqueid": "a unique identifier generated for the record",
+        "swver": "the version of the app that collected the record",
+        "survey_id": "the identifier of the survey the record belongs to",
+    }
     # Word operators are excluded from field-reference validation.
     LOGIC_KEYWORDS = {"and", "or", "not", "contains", "does", "contain"}
 
@@ -90,6 +110,9 @@ class ExcelReader:
         self.errorsEncountered = False
         self.worksheetErrorsEncountered = False
         self.questionList: list[Question] = []
+        # Reserved variables whose calculation was dropped, so the
+        # reserved-variable check can report it.
+        self.reservedFieldsWithCalculation: set[str] = set()
         # Automatic fields the manifest fills in (linking field, increment
         # field, primary key, idconfig parts). They legitimately have no
         # calculation, so they are exempt from the calculation check.
@@ -99,6 +122,7 @@ class ExcelReader:
         self.worksheetErrorsEncountered = False
         self.logstring.append(f"\rChecking worksheet: '{worksheet.title}'")
         self.questionList = []
+        self.reservedFieldsWithCalculation = set()
 
         for row_idx in range(1, worksheet.max_row + 1):
             try:
@@ -125,7 +149,8 @@ class ExcelReader:
                     continue
 
                 self._check_field_name(worksheet.title, q.fieldName)
-                q.questionType = self._get_cell_trim(worksheet, row_idx, 2)
+                q.questionType = self._normalize_question_type(
+                    self._get_cell_trim(worksheet, row_idx, 2))
                 q.fieldType = self._get_cell_trim(worksheet, row_idx, 3)
                 q.questionText = self._get_cell_trim(worksheet, row_idx, 4)
 
@@ -147,6 +172,12 @@ class ExcelReader:
                     if q.questionType == "automatic":
                         if q.fieldName.lower() not in self.BUILT_IN_AUTO_FIELDS:
                             self._parse_automatic_calculation(raw_responses, q, worksheet.title, q.fieldName)
+                        else:
+                            # The app has its own handler for these, so the
+                            # calculation is dropped rather than written out.
+                            # Record it so the reserved-variable check can say so.
+                            self.reservedFieldsWithCalculation.add(
+                                q.fieldName.lower())
                     else:
                         self._error(
                             f"ERROR - Calculation: FieldName '{q.fieldName}' in worksheet '{worksheet.title}' "
@@ -236,6 +267,7 @@ class ExcelReader:
             self._check_responses_are_answerable(worksheet.title)
             self._check_preskip_does_not_test_itself(worksheet.title)
             self._check_max_characters_is_meaningful(worksheet.title)
+            self._check_reserved_automatic_fields(worksheet.title)
             if not self.worksheetErrorsEncountered:
                 self.logstring.append(f"No errors found in '{worksheet.title}'")
 
@@ -586,6 +618,56 @@ class ExcelReader:
                 self._error(
                     f"ERROR - MaxCharacters: In worksheet '{worksheet}', MaxCharacters for FieldName '{question.fieldName}' needs a value"
                 )
+
+    @classmethod
+    def _normalize_question_type(cls, question_type: str) -> str:
+        """Collapse the spellings of "automatic" to the canonical one.
+
+        A dictionary may say `calc`, `calculation` or `calculated`; they all
+        mean the same thing. Normalizing here rather than in the XML keeps
+        every downstream check on one word, and keeps the generated file
+        readable by app builds that only recognise `automatic`.
+        """
+        if question_type.strip().lower() in cls.AUTOMATIC_TYPE_ALIASES:
+            return "automatic"
+        return question_type
+
+    def _check_reserved_automatic_fields(self, worksheet: str) -> None:
+        """Point out reserved variables, without ever failing the build.
+
+        These names have built-in meaning in the app. Declaring one is
+        perfectly valid — many dictionaries do, so the variable is visible to
+        analysts reading the spreadsheet — so this only ever warns, and every
+        dictionary written before these names were reserved keeps working.
+
+        Giving one a calculation is worth calling out separately: the
+        calculation is dropped rather than written to the XML, so an author who
+        writes one gets no effect at all.
+        """
+        for question in self.questionList:
+            name = question.fieldName.lower()
+            purpose = self.RESERVED_AUTOMATIC_FIELDS.get(name)
+            if purpose is None:
+                continue
+
+            if name in self.reservedFieldsWithCalculation:
+                self.logstring.append(
+                    f"WARNING - Reserved variable: In worksheet '{worksheet}', "
+                    f"'{question.fieldName}' is a reserved automatic variable "
+                    f"({purpose}) and has been given a calculation. The "
+                    "calculation is IGNORED — the app supplies this value "
+                    "itself. Remove the calculation, or use a different "
+                    "FieldName if you need your own value."
+                )
+                continue
+
+            self.logstring.append(
+                f"WARNING - Reserved variable: In worksheet '{worksheet}', "
+                f"'{question.fieldName}' is a reserved automatic variable — "
+                f"{purpose}. The app fills this in on its own, so it needs no "
+                "calculation, responses or validation. Keeping the row is fine; "
+                "it documents the variable for whoever analyses the data."
+            )
 
     def _check_automatic_has_calculation(self, worksheet: str) -> None:
         """An automatic field with no calculation is never populated.

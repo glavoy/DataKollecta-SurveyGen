@@ -210,5 +210,77 @@ class MaxCharactersWarningTests(unittest.TestCase):
         self.assertEqual(warnings(reader), [])
 
 
+class AutomaticTypeAliasTests(unittest.TestCase):
+    """`calc`, `calculation` and `calculated` all mean `automatic`."""
+
+    def _question_type_for(self, declared):
+        reader = read(
+            [row("total", declared, "integer", responses="calc:constant\nvalue:1")]
+        )
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+        return reader.questionList[0].questionType
+
+    def test_every_spelling_normalizes_to_automatic(self):
+        for declared in ("automatic", "calc", "calculation", "calculated"):
+            with self.subTest(declared=declared):
+                self.assertEqual(self._question_type_for(declared), "automatic")
+
+    def test_spelling_is_case_insensitive(self):
+        self.assertEqual(self._question_type_for("Calculated"), "automatic")
+
+    def test_an_unrelated_type_is_untouched(self):
+        reader = read([row("sex", "radio", "integer", responses="1:Male\n2:Female")])
+        self.assertEqual(reader.questionList[0].questionType, "radio")
+
+    def test_a_real_typo_is_still_rejected(self):
+        reader = read([row("total", "calculatd", "integer")])
+        self.assertTrue(reader.errorsEncountered)
+
+
+class ReservedAutomaticFieldTests(unittest.TestCase):
+    """Reserved names are pointed out but never fail the build."""
+
+    def test_declaring_one_warns_but_does_not_error(self):
+        reader = read([row("starttime", "automatic", "datetime")])
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+        warning = "\n".join(warnings(reader))
+        self.assertIn("starttime", warning)
+        self.assertIn("reserved automatic variable", warning)
+        self.assertIn("the date and time the interview was started", warning)
+
+    def test_every_reserved_name_is_covered(self):
+        names = ["starttime", "startdate", "stoptime", "lastmod",
+                 "uniqueid", "swver", "survey_id"]
+        reader = read([row(n, "automatic", "text") for n in names])
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+        self.assertEqual(len(warnings(reader)), len(names))
+
+    def test_a_calculation_on_a_reserved_name_warns_it_is_ignored(self):
+        # The generator drops the calculation rather than writing it out, so
+        # an author who writes one gets no effect at all.
+        reader = read(
+            [row("starttime", "automatic", "datetime",
+                 responses="calc:constant\nvalue:x")]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+        self.assertIn("IGNORED", "\n".join(warnings(reader)))
+        self.assertEqual(len(warnings(reader)), 1)
+
+    def test_an_ordinary_field_is_not_flagged(self):
+        reader = read([row("age", "text", "text_integer", maxchars="3")])
+
+        self.assertEqual(warnings(reader), [])
+
+    def test_an_uppercase_field_name_is_rejected_before_this_check(self):
+        # FieldNames must be lowercase, so a reserved name can only ever
+        # arrive in lowercase.
+        reader = read([row("StartTime", "automatic", "datetime")])
+
+        self.assertTrue(reader.errorsEncountered)
+
+
 if __name__ == "__main__":
     unittest.main()
