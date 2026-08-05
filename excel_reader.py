@@ -72,14 +72,20 @@ class ExcelReader:
         "text",
         "datetime",
         "date",
-        "phone_num",
         "integer",
         "text_integer",
         "text_decimal",
-        "text_id",
         "n/a",
         "hourmin",
     }
+    # What a typed answer may be. `integer` is deliberately absent: it is the
+    # FieldType a radio question stores, and allowing it here would leave the
+    # app unable to tell a whole number from a decimal.
+    TYPED_FIELD_TYPES = {"text", "text_integer", "text_decimal", "hourmin"}
+    # Field types whose answer is a number, and so can carry a range.
+    NUMERIC_FIELD_TYPES = {"text_integer", "text_decimal"}
+    # A time is always hh:mm.
+    HOURMIN_MAX_CHARACTERS = "=5"
     # Reserved system variables. The generator writes these itself, in the
     # positions that make them correct, so they never need a calculation and a
     # declared row is dropped rather than passed through. See models.py.
@@ -244,6 +250,7 @@ class ExcelReader:
             self._check_logic_field_names(worksheet.title)
             self._check_skip_to_field_names(worksheet.title)
             self._check_required_max_characters(worksheet.title)
+            self._check_ranges(worksheet.title)
             self._check_duplicate_columns(worksheet.title)
             self._check_automatic_has_calculation(worksheet.title)
             self._check_responses_are_answerable(worksheet.title)
@@ -342,6 +349,13 @@ class ExcelReader:
             self._error(
                 f"ERROR - FieldType: The FieldType '{fieldtype}' for FieldName '{fieldname}' in table '{worksheet}' "
                 "is not among the predefined list."
+            )
+
+        if questiontype == "text" and fieldtype not in self.TYPED_FIELD_TYPES:
+            self._error(
+                f"ERROR - FieldType: The FieldType '{fieldtype}' for FieldName '{fieldname}' in table "
+                f"'{worksheet}' cannot be used with the QuestionType 'text'. Use one of: "
+                f"{', '.join(sorted(self.TYPED_FIELD_TYPES))}."
             )
 
         if questiontype == "radio" and fieldtype != "integer":
@@ -591,14 +605,73 @@ class ExcelReader:
                     )
 
     def _check_required_max_characters(self, worksheet: str) -> None:
+        """Every typed answer needs a length limit.
+
+        Keyed on the QuestionType rather than a list of FieldTypes: the list
+        used to name `text_integer` but not `integer`, so moving a field to the
+        newer spelling silently dropped its length limit.
+        """
         for question in self.questionList:
-            if (
-                question.fieldType in {"text", "text_integer", "phone_num"}
-                and question.questionType not in {"automatic", "checkbox", "combobox"}
-                and question.maxCharacters == "-9"
-            ):
+            if question.questionType != "text":
+                continue
+
+            if question.fieldType == "hourmin":
+                # A time is hh:mm, so the length is not the author's to choose.
+                if question.maxCharacters != self.HOURMIN_MAX_CHARACTERS:
+                    self._error(
+                        f"ERROR - MaxCharacters: In worksheet '{worksheet}', MaxCharacters for FieldName "
+                        f"'{question.fieldName}' must be '{self.HOURMIN_MAX_CHARACTERS}' when the FieldType "
+                        "is 'hourmin' — a time is always hh:mm."
+                    )
+                continue
+
+            if question.maxCharacters == "-9":
                 self._error(
                     f"ERROR - MaxCharacters: In worksheet '{worksheet}', MaxCharacters for FieldName '{question.fieldName}' needs a value"
+                )
+
+    def _check_ranges(self, worksheet: str) -> None:
+        """LowerRange and UpperRange come as a pair, and only on numbers.
+
+        A lower bound with no upper bound is the dangerous case: the generator
+        writes the blank as `maxvalue='-9'`, so every value above -9 fails and
+        the question cannot be answered at all.
+        """
+        for question in self.questionList:
+            if question.questionType not in {"text", "date"}:
+                continue
+
+            has_lower = question.lowerRange != "-9"
+            has_upper = question.upperRange != "-9"
+
+            if question.fieldType == "hourmin":
+                if has_lower or has_upper:
+                    self._error(
+                        f"ERROR - Range: In worksheet '{worksheet}', FieldName '{question.fieldName}' has a "
+                        "LowerRange or UpperRange, which cannot be applied to a 'hourmin' field. Leave both blank."
+                    )
+                continue
+
+            if has_lower != has_upper:
+                missing = "UpperRange" if has_lower else "LowerRange"
+                self._error(
+                    f"ERROR - Range: In worksheet '{worksheet}', FieldName '{question.fieldName}' sets only one "
+                    f"end of its range. Set {missing} as well, or clear both — a half-set range rejects every answer."
+                )
+                continue
+
+            # A fixed-length number is an identifier (a household ID, a phone
+            # number), where a range means nothing. A variable-length one is a
+            # quantity, and a quantity without a range accepts any value that
+            # fits.
+            if (
+                question.fieldType in self.NUMERIC_FIELD_TYPES
+                and not has_lower
+                and not question.maxCharacters.startswith("=")
+            ):
+                self.logstring.append(
+                    f"WARNING - Range: In worksheet '{worksheet}', FieldName '{question.fieldName}' is numeric "
+                    "with no LowerRange or UpperRange, so any value that fits MaxCharacters is accepted."
                 )
 
     @classmethod

@@ -23,8 +23,17 @@ HEADERS = [
 ]
 
 
-def row(fieldname, qtype, ftype, text="Question text", maxchars="", responses="", skip=""):
-    return [fieldname, qtype, ftype, text, maxchars, responses, "", "", "", "", "", "", skip, ""]
+def row(fieldname, qtype, ftype, text="Question text", maxchars="", responses="",
+        skip="", lower="", upper=""):
+    return [fieldname, qtype, ftype, text, maxchars, responses, lower, upper,
+            "", "", "", "", skip, ""]
+
+
+def numeric_row(fieldname="age", ftype="text_integer", maxchars="3", **kwargs):
+    """A numeric question with nothing for the validations to complain about."""
+    kwargs.setdefault("lower", "0")
+    kwargs.setdefault("upper", "120")
+    return row(fieldname, "text", ftype, maxchars=maxchars, **kwargs)
 
 
 def read(rows, supplied=None):
@@ -270,7 +279,7 @@ class ReservedAutomaticFieldTests(unittest.TestCase):
         self.assertEqual(len(warnings(reader)), 1)
 
     def test_an_ordinary_field_is_not_flagged(self):
-        reader = read([row("age", "text", "text_integer", maxchars="3")])
+        reader = read([numeric_row()])
 
         self.assertEqual(warnings(reader), [])
 

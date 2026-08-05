@@ -281,15 +281,22 @@ The data type that determines how the value is stored and validated.
 | FieldType | Description | Storage Type |
 |-----------|-------------|--------------|
 | `text` | Text string | Text |
-| `integer` | Whole numbers | Integer |
-| `text_integer` | Text field accepting only integers | Text (validated) |
-| `text_decimal` | Text field accepting decimal numbers | Text (validated) |
-| `text_id` | Text identifier | Text |
-| `phone_num` | Phone number | Text |
+| `integer` | Whole numbers — the value a `radio` stores | Integer |
+| `text_integer` | Typed field accepting only digits | Text (validated) |
+| `text_decimal` | Typed field accepting digits and one decimal point | Text (validated) |
+| `hourmin` | 24-hour time, `hh:mm` — the `:` is inserted by the app | Text (validated) |
 | `date` | Date only | Date |
 | `datetime` | Date and time | DateTime |
-| `hourmin` | Hour:minute format | Text |
 | `n/a` | Not applicable | None (for information questions) |
+
+**A `text` question must use `text`, `text_integer`, `text_decimal` or
+`hourmin`.** `integer` is what a `radio` stores; using it on a typed question
+leaves the app unable to tell a whole number from a decimal, and it used to
+skip the MaxCharacters requirement as well.
+
+`phone_num` and `text_id` have been removed. Both behaved exactly as `text`,
+and no dictionary used them — record a phone number as `text_integer` with a
+fixed length (`=10`).
 
 ---
 
@@ -328,16 +335,18 @@ Select the mother of [[child_name]]
 Maximum character length for text fields.
 
 **Requirements:**
-- Required for `text`, `text_integer`, and `phone_num` field types
+- **Required for every question whose QuestionType is `text`**, whatever its FieldType
 - Must be a number between 1 and 2000
-- Leave blank for non-text fields
+- Leave blank for questions that are not typed into (`radio`, `checkbox`, `date`, `automatic`)
 - Use `=` to force length
+- Must be `=5` when the FieldType is `hourmin` — a time is always `hh:mm`
 
 **Examples:**
 - `80` for a name field
-- `10` for a phone number
+- `=10` for a phone number
 - `255` for a comments field
 - `=3` user must enter 3 characters and 3 characters will always be saved in the database
+- `5` for a `text_decimal` such as `120.5` — **the decimal point counts toward the limit**
 
 ---
 
@@ -638,6 +647,13 @@ Minimum value for numeric validation or minimum date for date questions.
 **Requirements:**
 - Must be a number (integer or decimal)
 - Used with `UpperRange` to create a validation range
+- **Set both or neither.** A lower bound with a blank upper bound is written as
+  `maxvalue='-9'`, which rejects every answer and makes the question
+  impossible to complete — so this is an error.
+- Not allowed on `hourmin`, where the format already fixes the valid values
+- A `text_integer` or `text_decimal` field with **no** range warns, unless its
+  MaxCharacters is fixed (`=10`) — a fixed length means an identifier, such as
+  a household ID or phone number, where a numeric range is meaningless
 
 **Example:**
 - `LowerRange: 0`

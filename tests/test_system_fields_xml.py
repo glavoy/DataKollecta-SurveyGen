@@ -7,7 +7,7 @@ from excel_reader import ExcelReader
 from models import LEADING_SYSTEM_FIELDS, TRAILING_SYSTEM_FIELDS
 from xml_generator import XmlGenerator
 
-from tests.test_dd_validations import HEADERS, row
+from tests.test_dd_validations import HEADERS, numeric_row, row
 
 from openpyxl import Workbook
 
@@ -47,14 +47,14 @@ class SystemFieldsAreWrittenTests(unittest.TestCase):
     """The generator supplies the system variables, so a dictionary never has to."""
 
     def test_they_are_written_even_when_not_declared(self):
-        xml, _ = generate([row("age", "text", "text_integer", maxchars="3")])
+        xml, _ = generate([numeric_row()])
         names = field_order(xml)
 
         for name in LEADING + TRAILING:
             self.assertIn(name, names)
 
     def test_leading_fields_come_before_the_first_real_question(self):
-        xml, _ = generate([row("age", "text", "text_integer", maxchars="3")])
+        xml, _ = generate([numeric_row()])
         names = field_order(xml)
 
         self.assertEqual(names[: len(LEADING)], LEADING)
@@ -63,7 +63,7 @@ class SystemFieldsAreWrittenTests(unittest.TestCase):
     def test_trailing_fields_sit_between_the_last_question_and_the_final_screen(self):
         # Navigation stops on the end-of-survey screen, so anything after it is
         # never computed and would be saved empty.
-        xml, _ = generate([row("age", "text", "text_integer", maxchars="3")])
+        xml, _ = generate([numeric_row()])
         names = field_order(xml)
 
         self.assertEqual(names[-1], "end_of_questions")
@@ -71,7 +71,7 @@ class SystemFieldsAreWrittenTests(unittest.TestCase):
         self.assertLess(names.index("age"), names.index("uniqueid"))
 
     def test_they_are_written_with_the_expected_types(self):
-        xml, _ = generate([row("age", "text", "text_integer", maxchars="3")])
+        xml, _ = generate([numeric_row()])
 
         for name, fieldtype in LEADING_SYSTEM_FIELDS + TRAILING_SYSTEM_FIELDS:
             self.assertIn(
@@ -88,7 +88,7 @@ class DeclaredSystemFieldsTests(unittest.TestCase):
         xml, _ = generate(
             [
                 row("starttime", "automatic", "datetime"),
-                row("age", "text", "text_integer", maxchars="3"),
+                numeric_row(),
                 row("stoptime", "automatic", "datetime"),
             ]
         )
@@ -102,7 +102,7 @@ class DeclaredSystemFieldsTests(unittest.TestCase):
         # through the interview.
         xml, _ = generate(
             [
-                row("age", "text", "text_integer", maxchars="3"),
+                numeric_row(),
                 row("stoptime", "automatic", "datetime"),
                 row("weight", "text", "text_integer", maxchars="3"),
             ]
@@ -115,10 +115,10 @@ class DeclaredSystemFieldsTests(unittest.TestCase):
     def test_declaring_them_all_gives_the_same_file_as_declaring_none(self):
         declared, _ = generate(
             [row(name, "automatic", "text") for name in LEADING]
-            + [row("age", "text", "text_integer", maxchars="3")]
+            + [numeric_row()]
             + [row(name, "automatic", "text") for name in TRAILING]
         )
-        omitted, _ = generate([row("age", "text", "text_integer", maxchars="3")])
+        omitted, _ = generate([numeric_row()])
 
         self.assertEqual(declared, omitted)
 
@@ -126,7 +126,7 @@ class DeclaredSystemFieldsTests(unittest.TestCase):
         _, reader = generate(
             [
                 row("starttime", "automatic", "datetime"),
-                row("age", "text", "text_integer", maxchars="3"),
+                numeric_row(),
             ]
         )
 
@@ -146,7 +146,7 @@ class OtherAutomaticFieldsAreUntouchedTests(unittest.TestCase):
             [
                 row("hhid", "automatic", "integer"),
                 row("netnum", "automatic", "integer"),
-                row("age", "text", "text_integer", maxchars="3"),
+                numeric_row(),
             ],
             supplied={"hhid", "netnum"},
         )
@@ -160,7 +160,7 @@ class OtherAutomaticFieldsAreUntouchedTests(unittest.TestCase):
     def test_a_calculated_field_keeps_its_position(self):
         xml, _ = generate(
             [
-                row("age", "text", "text_integer", maxchars="3"),
+                numeric_row(),
                 row("age_group", "calculated", "integer",
                     responses="calc:constant\nvalue:1"),
             ]
