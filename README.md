@@ -1630,6 +1630,21 @@ These catch mistakes that produce a valid-looking XML file but broken data colle
   position, and drops the declared row — so the placement in the spreadsheet does not
   matter and there can never be two. Never an error; the row can stay. A `calc:` block on
   one is called out separately, because the calculation is dropped rather than applied.
+- **Skip that tests a reserved variable**: which questions get asked must not depend on a
+  value the generator supplies. The trailing five are still empty while the questionnaire
+  is being answered, so the skip would never fire and the question it guards would be
+  asked of everyone; and branching on `starttime` or `startdate` would make one deployed
+  package ask different questions on different days. Regenerate the questionnaire instead.
+- **Trailing reserved variable read by a logic check, calculation or response filter**:
+  `uniqueid`, `swver`, `survey_id`, `lastmod` and `stoptime` are written *after* the last
+  question, so anything reading one during the interview sees an empty value. A logic
+  check never fires and looks like a validation that always passes; a calculation or a
+  filter computes from nothing. The usual cause is reaching for `lastmod` when the
+  interview date was meant — use `startdate`.
+
+  `starttime` and `startdate` are deliberately **allowed** here. They hold a value from
+  the first question onward, and `separator:[[startdate]]` on an `age_at_date` calculation
+  is the intended way to get age at interview.
 - **Skip to a reserved variable**: because the generator chooses where those go —
   `starttime` and `startdate` before the first question, the rest after the last — a skip
   aimed at one never lands where the spreadsheet suggests. It jumps either back past the

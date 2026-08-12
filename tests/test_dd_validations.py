@@ -374,5 +374,128 @@ class SkipToReservedFieldTests(unittest.TestCase):
         self.assertIn("nonexistent FieldName", "\n".join(errors(reader)))
 
 
+class SkipTestingAReservedFieldTests(unittest.TestCase):
+    """Which questions get asked must not depend on a generator-supplied value."""
+
+    def test_testing_a_trailing_variable_is_an_error(self):
+        # Empty while the questionnaire is being answered, so the skip would
+        # never fire and the guarded question would be asked of everyone.
+        reader = read(
+            [
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if survey_id = 2, skip to netshape"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("reserved variable", "\n".join(errors(reader)))
+
+    def test_testing_a_leading_variable_is_also_an_error(self):
+        # This one would work at runtime, but it makes a single package ask
+        # different questions on different days. Regenerate instead.
+        reader = read(
+            [
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if startdate = 2026-01-01, skip to netshape"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("reserved variable", "\n".join(errors(reader)))
+
+    def test_testing_an_ordinary_field_is_still_correct(self):
+        reader = read(
+            [
+                row("obs", "radio", "integer", responses="1:Yes\n0:No"),
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="preskip: if obs = 1, skip to netshape"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+
+class TrailingVariableInExpressionTests(unittest.TestCase):
+    """A trailing variable is empty during the interview, so reading one is
+    always a silent failure -- in a logic check or in the Responses column."""
+
+    def test_logic_check_referencing_one_is_an_error(self):
+        # `row` has no logic-check argument, so set the column directly.
+        workbook_rows = [numeric_row("age"), numeric_row("confirm_age")]
+        workbook_rows[1][8] = "lastmod < startdate; 'Bad date!'"
+        reader = read(workbook_rows)
+
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn("lastmod", message)
+        self.assertIn("reserved variable", message)
+
+    def test_logic_check_referencing_a_leading_variable_is_allowed(self):
+        workbook_rows = [numeric_row("age"), numeric_row("confirm_age")]
+        workbook_rows[1][8] = "confirm_age <> age; 'That does not match!'"
+        reader = read(workbook_rows)
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_calculation_placeholder_on_a_leading_variable_is_allowed(self):
+        # The real AVERT age calculation. This must keep working.
+        reader = read(
+            [
+                row("dob", "date", "date", lower="1900-01-01", upper="2050-12-31"),
+                row("age_calculated", "automatic", "integer",
+                    responses="calc:age_at_date\nfield:dob\nvalue:years\n"
+                              "separator:[[startdate]]"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_calculation_placeholder_on_a_trailing_variable_is_an_error(self):
+        # The realistic slip: `lastmod` reads like "the interview date".
+        reader = read(
+            [
+                row("dob", "date", "date", lower="1900-01-01", upper="2050-12-31"),
+                row("age_calculated", "automatic", "integer",
+                    responses="calc:age_at_date\nfield:dob\nvalue:years\n"
+                              "separator:[[lastmod]]"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("lastmod", "\n".join(errors(reader)))
+
+    def test_a_case_condition_on_a_trailing_variable_is_an_error(self):
+        reader = read(
+            [
+                row("need_visit", "automatic", "integer",
+                    responses="calc:case\nwhen:uniqueid = 1 => 1\nelse:0"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("uniqueid", "\n".join(errors(reader)))
+
+    def test_a_lookup_on_a_trailing_variable_is_an_error(self):
+        reader = read(
+            [row("copy", "automatic", "text", responses="calc:lookup\nfield:swver")]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("swver", "\n".join(errors(reader)))
+
+    def test_a_declared_reserved_row_is_not_double_reported(self):
+        # Declaring one already warns; its calculation is dropped, so the
+        # Responses check must stay quiet rather than adding an error.
+        reader = read(
+            [row("stoptime", "automatic", "datetime",
+                 responses="calc:lookup\nfield:lastmod")]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+
 if __name__ == "__main__":
     unittest.main()

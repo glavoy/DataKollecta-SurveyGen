@@ -26,8 +26,22 @@ TRAILING_SYSTEM_FIELDS: tuple[tuple[str, str], ...] = (
     ("stoptime", "datetime"),   # when the interview was saved
 )
 
-RESERVED_SYSTEM_FIELDS: frozenset[str] = frozenset(
-    name for name, _ in LEADING_SYSTEM_FIELDS + TRAILING_SYSTEM_FIELDS
+# The split is not just about placement, it decides what may reference what.
+# The leading pair holds a value from the first question onward, so a
+# calculation such as age-at-interview can read `[[startdate]]` and get the
+# right answer. The trailing five are still empty while the questionnaire is
+# being answered -- they are filled once navigation passes the last question --
+# so anything that reads one during the interview sees nothing at all, and
+# fails silently rather than complaining.
+LEADING_SYSTEM_FIELD_NAMES: frozenset[str] = frozenset(
+    name for name, _ in LEADING_SYSTEM_FIELDS
+)
+TRAILING_SYSTEM_FIELD_NAMES: frozenset[str] = frozenset(
+    name for name, _ in TRAILING_SYSTEM_FIELDS
+)
+
+RESERVED_SYSTEM_FIELDS: frozenset[str] = (
+    LEADING_SYSTEM_FIELD_NAMES | TRAILING_SYSTEM_FIELD_NAMES
 )
 
 

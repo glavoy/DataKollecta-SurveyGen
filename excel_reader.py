@@ -8,6 +8,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from models import (
     RESERVED_SYSTEM_FIELDS,
+    TRAILING_SYSTEM_FIELD_NAMES,
     CalculationParameter,
     CalculationPart,
     CalculationType,
@@ -42,6 +43,7 @@ class ExcelReader:
     HARDCODED_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
     FIELD_NAME_RE = re.compile(r"\b[a-z_][a-z0-9_]*\b", re.IGNORECASE)
     QUOTED_STRING_RE = re.compile(r"'[^']*'")
+    PLACEHOLDER_RE = re.compile(r"\[\[(\w+)\]\]")
     # Alternatives are ordered longest-first so '>=' is not consumed as '>',
     # which would leave the '=' stranded at the front of the filter value.
     # The word operators are matched case-insensitively.
@@ -249,6 +251,7 @@ class ExcelReader:
         if not self.worksheetErrorsEncountered:
             self._check_logic_field_names(worksheet.title)
             self._check_skip_to_field_names(worksheet.title)
+            self._check_responses_field_names(worksheet.title)
             self._check_required_max_characters(worksheet.title)
             self._check_ranges(worksheet.title)
             self._check_duplicate_columns(worksheet.title)
@@ -545,7 +548,14 @@ class ExcelReader:
                 matches = self.FIELD_NAME_RE.findall(clean_expression)
                 referenced = {m for m in matches if m.lower() not in self.LOGIC_KEYWORDS}
                 for ref in referenced:
-                    if ref in field_index:
+                    if ref.lower() in TRAILING_SYSTEM_FIELD_NAMES:
+                        self._error(
+                            f"ERROR - LogicCheck: In worksheet '{worksheet}', the LogicCheck for FieldName '{cur_field}' "
+                            f"uses the reserved variable '{ref}', which is still empty while the questionnaire is "
+                            "being answered. The check would never fire, so it would look like a validation that "
+                            "always passes. Use 'startdate' if the interview date is what was meant."
+                        )
+                    elif ref in field_index:
                         if field_index[ref] > field_index[cur_field]:
                             self._error(
                                 f"ERROR - LogicCheck: In worksheet '{worksheet}', the LogicCheck for FieldName '{cur_field}' "
@@ -556,6 +566,73 @@ class ExcelReader:
                             f"ERROR - LogicCheck: In worksheet '{worksheet}', the LogicCheck for FieldName '{cur_field}' "
                             f"uses a nonexistent FieldName: {ref}"
                         )
+
+    @classmethod
+    def _part_field_refs(cls, part: CalculationPart | None) -> set[str]:
+        """Field names one calculation part reads, following nested parts."""
+        if part is None:
+            return set()
+        refs: set[str] = set()
+        if part.lookupField:
+            refs.add(part.lookupField)
+        refs |= set(cls.PLACEHOLDER_RE.findall(part.querySql))
+        refs |= set(cls.PLACEHOLDER_RE.findall(part.constantValue))
+        for nested in part.parts:
+            refs |= cls._part_field_refs(nested)
+        return refs
+
+    @classmethod
+    def _responses_field_refs(cls, question: Question) -> set[str]:
+        """Every field the Responses column reads.
+
+        Covers both halves of that column: a calculation's structured slots,
+        and anything written as a `[[placeholder]]` -- the reference date on an
+        age-at-date calculation, a database response filter, a query's WHERE
+        clause.
+        """
+        refs: set[str] = set()
+        if question.calculationLookupField:
+            refs.add(question.calculationLookupField)
+        for parameter in question.calculationQueryParameters:
+            refs.add(parameter.fieldName)
+        for condition in question.calculationCaseConditions:
+            refs.add(condition.field)
+            refs |= cls._part_field_refs(condition.result)
+        refs |= cls._part_field_refs(question.calculationCaseElse)
+        for part in question.calculationMathParts + question.calculationConcatParts:
+            refs |= cls._part_field_refs(part)
+        # Placeholders. The raw Responses text is consumed by whichever block
+        # it held, so read the parsed slots: `separator` is where an
+        # age-at-date calculation puts its reference date, and a filter value
+        # is how a response list narrows itself against an earlier answer.
+        for text in (
+            question.calculationConcatSeparator,
+            question.calculationQuerySql,
+            question.calculationConstantValue,
+            *(f.value for f in question.responseFilters),
+        ):
+            refs |= set(cls.PLACEHOLDER_RE.findall(text))
+        return {ref.strip() for ref in refs if ref and ref.strip()}
+
+    def _check_responses_field_names(self, worksheet: str) -> None:
+        """Nothing answered during the interview may read a trailing variable.
+
+        `starttime` and `startdate` are deliberately allowed: an age-at-date
+        calculation reading `[[startdate]]` is the intended use, and they hold a
+        value from the first question onward.
+        """
+        for question in self.questionList:
+            if question.fieldName.lower() in RESERVED_SYSTEM_FIELDS:
+                continue  # the row is dropped and already warned about
+            for ref in sorted(self._responses_field_refs(question)):
+                if ref.lower() in TRAILING_SYSTEM_FIELD_NAMES:
+                    self._error(
+                        f"ERROR - Responses: In worksheet '{worksheet}', FieldName "
+                        f"'{question.fieldName}' reads the reserved variable '{ref}', which is "
+                        "still empty while the questionnaire is being answered. The calculation "
+                        "or filter would see nothing at all. Use 'startdate' if the interview "
+                        "date is what was meant."
+                    )
 
     def _check_skip_to_field_names(self, worksheet: str) -> None:
         field_index = {q.fieldName: i for i, q in enumerate(self.questionList)}
@@ -574,7 +651,16 @@ class ExcelReader:
                 fieldname_to_skip_to = words[-1].strip()
                 cur_index = field_index[cur_field]
 
-                if fieldname_to_check in field_index:
+                if fieldname_to_check.lower() in RESERVED_SYSTEM_FIELDS:
+                    self._error(
+                        f"ERROR - Skip: In worksheet '{worksheet}', the skip for FieldName '{cur_field}' "
+                        f"tests the reserved variable '{fieldname_to_check}'. Which questions get asked "
+                        "must not depend on a value the generator supplies: the trailing variables are "
+                        "still empty while the questionnaire is being answered, so the skip would never "
+                        "fire, and branching on 'starttime' or 'startdate' would make one package ask "
+                        "different questions on different days. Regenerate the questionnaire instead."
+                    )
+                elif fieldname_to_check in field_index:
                     if field_index[fieldname_to_check] > cur_index:
                         self._error(
                             f"ERROR - Skip: In worksheet '{worksheet}', the skip for FieldName '{cur_field}' "
