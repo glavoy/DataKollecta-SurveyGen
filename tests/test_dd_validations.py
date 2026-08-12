@@ -486,6 +486,44 @@ class TrailingVariableInExpressionTests(unittest.TestCase):
         self.assertTrue(reader.errorsEncountered)
         self.assertIn("swver", "\n".join(errors(reader)))
 
+    def test_question_text_referencing_one_is_an_error(self):
+        # Same emptiness, so the respondent would be shown a gap in the
+        # sentence. Nothing about being display-only makes it work.
+        reader = read(
+            [row("q1", "text", "text", text="Recorded at [[lastmod]]?", maxchars="20")]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn("lastmod", message)
+        self.assertIn("question text", message)
+
+    def test_question_text_referencing_an_ordinary_field_is_allowed(self):
+        reader = read(
+            [
+                row("participantsname", "text", "text", maxchars="40"),
+                row("q1", "text", "text", text="Is [[participantsname]] well?",
+                    maxchars="20"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_question_text_referencing_startdate_is_allowed(self):
+        reader = read(
+            [row("q1", "text", "text", text="On [[startdate]], was the child well?",
+                 maxchars="20")]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_the_message_names_where_the_reference_was_found(self):
+        reader = read(
+            [row("copy", "automatic", "text", responses="calc:lookup\nfield:swver")]
+        )
+
+        self.assertIn("its calculation", "\n".join(errors(reader)))
+
     def test_a_declared_reserved_row_is_not_double_reported(self):
         # Declaring one already warns; its calculation is dropped, so the
         # Responses check must stay quiet rather than adding an error.

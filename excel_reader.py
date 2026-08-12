@@ -251,7 +251,7 @@ class ExcelReader:
         if not self.worksheetErrorsEncountered:
             self._check_logic_field_names(worksheet.title)
             self._check_skip_to_field_names(worksheet.title)
-            self._check_responses_field_names(worksheet.title)
+            self._check_reserved_variable_reads(worksheet.title)
             self._check_required_max_characters(worksheet.title)
             self._check_ranges(worksheet.title)
             self._check_duplicate_columns(worksheet.title)
@@ -582,56 +582,55 @@ class ExcelReader:
         return refs
 
     @classmethod
-    def _responses_field_refs(cls, question: Question) -> set[str]:
-        """Every field the Responses column reads.
+    def _question_field_refs(cls, question: Question) -> set[tuple[str, str]]:
+        """Every field a question reads, paired with where it reads it.
 
-        Covers both halves of that column: a calculation's structured slots,
-        and anything written as a `[[placeholder]]` -- the reference date on an
-        age-at-date calculation, a database response filter, a query's WHERE
-        clause.
+        Three places a field name can appear: a calculation's structured slots,
+        a response filter narrowing a list against an earlier answer, and the
+        question text a respondent is shown. The raw Responses text is consumed
+        by whichever block it held, so the parsed slots are read instead of it.
         """
-        refs: set[str] = set()
-        if question.calculationLookupField:
-            refs.add(question.calculationLookupField)
-        for parameter in question.calculationQueryParameters:
-            refs.add(parameter.fieldName)
+        refs: set[tuple[str, str]] = set()
+
+        def add(where: str, names) -> None:
+            refs.update((name.strip(), where) for name in names if name and name.strip())
+
+        add("its calculation", [question.calculationLookupField])
+        add("its calculation", [p.fieldName for p in question.calculationQueryParameters])
         for condition in question.calculationCaseConditions:
-            refs.add(condition.field)
-            refs |= cls._part_field_refs(condition.result)
-        refs |= cls._part_field_refs(question.calculationCaseElse)
+            add("its calculation", [condition.field])
+            add("its calculation", cls._part_field_refs(condition.result))
+        add("its calculation", cls._part_field_refs(question.calculationCaseElse))
         for part in question.calculationMathParts + question.calculationConcatParts:
-            refs |= cls._part_field_refs(part)
-        # Placeholders. The raw Responses text is consumed by whichever block
-        # it held, so read the parsed slots: `separator` is where an
-        # age-at-date calculation puts its reference date, and a filter value
-        # is how a response list narrows itself against an earlier answer.
-        for text in (
-            question.calculationConcatSeparator,
-            question.calculationQuerySql,
-            question.calculationConstantValue,
-            *(f.value for f in question.responseFilters),
-        ):
-            refs |= set(cls.PLACEHOLDER_RE.findall(text))
-        return {ref.strip() for ref in refs if ref and ref.strip()}
+            add("its calculation", cls._part_field_refs(part))
+        # `separator` is where an age-at-date calculation puts its reference date.
+        for text in (question.calculationConcatSeparator,
+                     question.calculationQuerySql,
+                     question.calculationConstantValue):
+            add("its calculation", cls.PLACEHOLDER_RE.findall(text))
+        for response_filter in question.responseFilters:
+            add("a response filter", cls.PLACEHOLDER_RE.findall(response_filter.value))
+        add("its question text", cls.PLACEHOLDER_RE.findall(question.questionText))
+        return refs
 
-    def _check_responses_field_names(self, worksheet: str) -> None:
-        """Nothing answered during the interview may read a trailing variable.
+    def _check_reserved_variable_reads(self, worksheet: str) -> None:
+        """Nothing in a question may read a trailing variable.
 
-        `starttime` and `startdate` are deliberately allowed: an age-at-date
-        calculation reading `[[startdate]]` is the intended use, and they hold a
-        value from the first question onward.
+        `starttime` and `startdate` are deliberately allowed: they hold a value
+        from the first question onward, and an age-at-date calculation reading
+        `[[startdate]]` is the intended use.
         """
         for question in self.questionList:
             if question.fieldName.lower() in RESERVED_SYSTEM_FIELDS:
                 continue  # the row is dropped and already warned about
-            for ref in sorted(self._responses_field_refs(question)):
+            for ref, where in sorted(self._question_field_refs(question)):
                 if ref.lower() in TRAILING_SYSTEM_FIELD_NAMES:
                     self._error(
-                        f"ERROR - Responses: In worksheet '{worksheet}', FieldName "
-                        f"'{question.fieldName}' reads the reserved variable '{ref}', which is "
-                        "still empty while the questionnaire is being answered. The calculation "
-                        "or filter would see nothing at all. Use 'startdate' if the interview "
-                        "date is what was meant."
+                        f"ERROR - Reserved variable: In worksheet '{worksheet}', FieldName "
+                        f"'{question.fieldName}' reads '{ref}' in {where}. That variable is "
+                        "written after the last question, so it is still empty while the "
+                        "questionnaire is being answered and would be read as nothing at all. "
+                        "Use 'startdate' if the interview date is what was meant."
                     )
 
     def _check_skip_to_field_names(self, worksheet: str) -> None:
