@@ -291,5 +291,88 @@ class ReservedAutomaticFieldTests(unittest.TestCase):
         self.assertTrue(reader.errorsEncountered)
 
 
+class SkipToReservedFieldTests(unittest.TestCase):
+    """A skip can never target a reserved variable.
+
+    The generator decides where those go, so the target is never in the place
+    the dictionary imagined: the leading pair sits before the first question
+    and the rest after the last.
+    """
+
+    def test_skipping_to_a_reserved_name_is_an_error(self):
+        reader = read(
+            [
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if everhung = 0, skip to uniqueid"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn("uniqueid", message)
+        self.assertIn("reserved variable", message)
+        # The old message called it nonexistent, which was misleading: the
+        # generator does write it, just somewhere else.
+        self.assertNotIn("nonexistent", message)
+
+    def test_declaring_the_target_does_not_make_it_legal(self):
+        # The case that used to pass silently. Declaring the row put it in
+        # field_index, so the target resolved -- but the generator drops the
+        # declared row and writes its own at the end of the questionnaire, so
+        # the skip jumped past every remaining question.
+        reader = read(
+            [
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if everhung = 0, skip to stoptime"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+                row("stoptime", "automatic", "datetime"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("reserved variable", "\n".join(errors(reader)))
+
+    def test_every_reserved_name_is_rejected(self):
+        names = ["starttime", "startdate", "stoptime", "lastmod",
+                 "uniqueid", "swver", "survey_id"]
+        for name in names:
+            with self.subTest(name=name):
+                reader = read(
+                    [
+                        row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                            skip=f"postskip: if everhung = 0, skip to {name}"),
+                        row("netshape", "radio", "integer",
+                            responses="1:Round\n2:Square"),
+                    ]
+                )
+
+                self.assertTrue(reader.errorsEncountered)
+                self.assertIn(name, "\n".join(errors(reader)))
+
+    def test_skipping_to_a_real_question_is_still_correct(self):
+        reader = read(
+            [
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if everhung = 0, skip to netshape"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_genuinely_missing_target_keeps_its_own_message(self):
+        reader = read(
+            [
+                row("everhung", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if everhung = 0, skip to nowhere"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("nonexistent FieldName", "\n".join(errors(reader)))
+
+
 if __name__ == "__main__":
     unittest.main()

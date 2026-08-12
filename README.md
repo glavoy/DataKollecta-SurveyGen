@@ -1630,6 +1630,12 @@ These catch mistakes that produce a valid-looking XML file but broken data colle
   position, and drops the declared row — so the placement in the spreadsheet does not
   matter and there can never be two. Never an error; the row can stay. A `calc:` block on
   one is called out separately, because the calculation is dropped rather than applied.
+- **Skip to a reserved variable**: because the generator chooses where those go —
+  `starttime` and `startdate` before the first question, the rest after the last — a skip
+  aimed at one never lands where the spreadsheet suggests. It jumps either back past the
+  start of the questionnaire or forward past every question that remains, clearing the
+  answers on the way. This is an error rather than a warning: unlike a declared row, there
+  is no arrangement in which it does something useful. Skip to a real question instead.
 
 #### FieldName Errors
 - **Starts with number**: Field names must start with a letter

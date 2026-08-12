@@ -586,7 +586,15 @@ class ExcelReader:
                         f"checks skip of a nonexistent FieldName: {fieldname_to_check}"
                     )
 
-                if fieldname_to_skip_to in field_index:
+                if fieldname_to_skip_to.lower() in RESERVED_SYSTEM_FIELDS:
+                    self._error(
+                        f"ERROR - Skip: In worksheet '{worksheet}', the skip for FieldName '{cur_field}' "
+                        f"skips to the reserved variable '{fieldname_to_skip_to}'. The generator places "
+                        "reserved variables itself ('starttime' and 'startdate' before the first question, "
+                        "the rest after the last), so a skip to one cannot land where the dictionary "
+                        "intends. Skip to a real question instead."
+                    )
+                elif fieldname_to_skip_to in field_index:
                     target_index = field_index[fieldname_to_skip_to]
                     if target_index < cur_index:
                         self._error(
