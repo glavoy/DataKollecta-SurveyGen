@@ -524,6 +524,33 @@ class TrailingVariableInExpressionTests(unittest.TestCase):
 
         self.assertIn("its calculation", "\n".join(errors(reader)))
 
+    def test_a_placeholder_in_a_logic_message_warns(self):
+        # Messages are not expanded, so this is not an empty value -- it is the
+        # literal brackets on screen. Warned about for every field name, not
+        # only reserved ones, because none of them work there.
+        workbook_rows = [numeric_row("age"), numeric_row("confirm_age")]
+        workbook_rows[1][8] = "confirm_age <> age; 'Does not match [[age]]!'"
+        reader = read(workbook_rows)
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+        warning = "\n".join(warnings(reader))
+        self.assertIn("[[age]]", warning)
+        self.assertIn("shown exactly as written", warning)
+
+    def test_a_reserved_placeholder_in_a_logic_message_warns_too(self):
+        workbook_rows = [numeric_row("age"), numeric_row("confirm_age")]
+        workbook_rows[1][8] = "confirm_age <> age; 'Recorded [[lastmod]]!'"
+        reader = read(workbook_rows)
+
+        self.assertIn("[[lastmod]]", "\n".join(warnings(reader)))
+
+    def test_a_message_without_a_placeholder_is_silent(self):
+        workbook_rows = [numeric_row("age"), numeric_row("confirm_age")]
+        workbook_rows[1][8] = "confirm_age <> age; 'That does not match!'"
+        reader = read(workbook_rows)
+
+        self.assertEqual(warnings(reader), [])
+
     def test_a_declared_reserved_row_is_not_double_reported(self):
         # Declaring one already warns; its calculation is dropped, so the
         # Responses check must stay quiet rather than adding an error.

@@ -252,6 +252,7 @@ class ExcelReader:
             self._check_logic_field_names(worksheet.title)
             self._check_skip_to_field_names(worksheet.title)
             self._check_reserved_variable_reads(worksheet.title)
+            self._check_message_placeholders(worksheet.title)
             self._check_required_max_characters(worksheet.title)
             self._check_ranges(worksheet.title)
             self._check_duplicate_columns(worksheet.title)
@@ -612,6 +613,28 @@ class ExcelReader:
             add("a response filter", cls.PLACEHOLDER_RE.findall(response_filter.value))
         add("its question text", cls.PLACEHOLDER_RE.findall(question.questionText))
         return refs
+
+    def _check_message_placeholders(self, worksheet: str) -> None:
+        """A validation message is shown exactly as it was written.
+
+        Question text goes through `SurveyLoader.expandPlaceholders`, but the
+        message on a logic or unique check does not -- the app renders the
+        string straight into the error banner. So a placeholder there is not an
+        empty value, it is the literal brackets, on screen, in front of the
+        interviewer. That is true of every field name, not just a reserved one,
+        which is why this warns about all of them.
+        """
+        for question in self.questionList:
+            messages = [check.partition(";")[2] for check in question.logicChecks]
+            messages.append(question.uniqueCheckMessage)
+            for message in messages:
+                for name in sorted(set(self.PLACEHOLDER_RE.findall(message))):
+                    self.logstring.append(
+                        f"WARNING - Message: In worksheet '{worksheet}', the validation message "
+                        f"for FieldName '{question.fieldName}' contains '[[{name}]]'. Messages "
+                        "are shown exactly as written, so the interviewer would see the brackets "
+                        "rather than a value. Word the message without it."
+                    )
 
     def _check_reserved_variable_reads(self, worksheet: str) -> None:
         """Nothing in a question may read a trailing variable.

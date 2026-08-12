@@ -1647,6 +1647,11 @@ These catch mistakes that produce a valid-looking XML file but broken data colle
   `starttime` and `startdate` are deliberately **allowed** here. They hold a value from
   the first question onward, and `separator:[[startdate]]` on an `age_at_date` calculation
   is the intended way to get age at interview.
+- **Placeholder in a validation message** *(warning)*: question text is expanded, but the
+  message on a logic or unique check is not — the app puts that string straight into the
+  error banner. So `'Does not match [[age]]'` shows the interviewer the brackets, not the
+  answer. This warns for *every* field name, not just reserved ones, because none of them
+  work there. Word the value into the sentence instead.
 - **Skip to a reserved variable**: because the generator chooses where those go —
   `starttime` and `startdate` before the first question, the rest after the last — a skip
   aimed at one never lands where the spreadsheet suggests. It jumps either back past the
