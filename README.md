@@ -610,8 +610,8 @@ For an OR, give the group its own automatic field and test that field instead.
 
 **Notes**
 
-- Operators: `=`, `!=`, `<>`, `>`, `<`, `>=`, `<=`. `<>` and `!=` mean the same
-  thing.
+- Operators: `=`, `!=`, `<>`, `>`, `<`, `>=`, `<=`, `contains`, `does not
+  contain`. `<>` and `!=` mean the same thing.
 - Put spaces around the operator — `when:age>=18 => 1` is rejected.
 - Do not quote values. `when:sex = "1"` compares against a three-character
   string and never matches.
@@ -632,8 +632,17 @@ For an OR, give the group its own automatic field and test that field instead.
   else:1
   ```
 
-  There is no `contains` / `does not contain` inside a `case` block — those
-  exist only for skip conditions (see below).
+  For genuine membership — "was option 5 selected, regardless of what else
+  was" — use `contains` / `does not contain` directly instead:
+
+  ```
+  calc:case
+  when:symptoms contains 5 => 1    # 5 = Vomiting, selected alongside anything else
+  else:0
+  ```
+
+  Unlike skip's `'contains'` syntax, the operator here is not quoted — it
+  follows the same bare, unquoted convention as every other `when` operator.
 
 #### 7. Age From Date
 Calculates age in years based on a date field.

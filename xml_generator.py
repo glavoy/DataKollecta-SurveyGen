@@ -299,13 +299,15 @@ class XmlGenerator:
     def _convert_operator_to_xml(op: str) -> str:
         """Escape a `when` condition's operator for the XML attribute.
 
-        `<>` becomes `!=` rather than `&lt;&gt;`. Every other evaluator in the
-        app accepts both spellings, but the one that runs case calculations
-        knows only `!=`, so a `<>` written here would never match and the
-        calculation would quietly return the wrong value. Normalizing keeps
-        `<>` meaning what it means everywhere else in a data dictionary.
+        `<>` becomes `!=` rather than `&lt;&gt;`, so only one canonical
+        spelling of "not equal" ever reaches the app, even though the app's
+        comparator accepts both as synonyms on its own. `contains` / `does
+        not contain` pass straight through, in whatever case and internal
+        spacing WHEN_CONDITION_RE let through -- normalized to lowercase with
+        single spaces first, so "Contains" and "does  not contain" both land
+        on the one spelling the app matches against.
         """
-        op = op.strip()
+        op = " ".join(op.strip().lower().split())
         converted = {
             "=": "=",
             "!=": "!=",
@@ -314,6 +316,8 @@ class XmlGenerator:
             "<": "&lt;",
             ">=": "&gt;=",
             "<=": "&lt;=",
+            "contains": "contains",
+            "does not contain": "does not contain",
         }.get(op)
         if converted is None:
             raise ValueError(f"Unsupported operator in a when condition: {op!r}")

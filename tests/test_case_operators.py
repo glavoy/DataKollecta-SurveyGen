@@ -1,9 +1,9 @@
 """Operators in a `when` condition must reach the app in a form it evaluates.
 
-The app's case evaluator knows `=`, `!=`, `>`, `<`, `>=`, `<=`. It does *not*
-know `<>`, unlike every other evaluator in the app, so a `<>` written straight
-through would never match and the calculation would quietly return the wrong
-value.
+The app's shared comparator accepts `=`, `!=`, `<>`, `>`, `<`, `>=`, `<=`,
+`contains`, and `does not contain`, treating `<>` as a synonym for `!=` on
+its own. This module still normalizes `<>` to `!=` on the way out, so only
+one canonical spelling of "not equal" reaches the app either way.
 """
 
 import re
@@ -33,6 +33,8 @@ class OperatorConversionTests(unittest.TestCase):
             "<": "&lt;",
             ">=": "&gt;=",
             "<=": "&lt;=",
+            "contains": "contains",
+            "does not contain": "does not contain",
         }
 
         for written, in_xml in expected.items():
@@ -78,6 +80,46 @@ class GeneratedCaseTests(unittest.TestCase):
 
         self.assertIn(("age", "&gt;=", "18"), when_attributes(xml))
         self.assertIn(("age", "&lt;", "5"), when_attributes(xml))
+
+    def test_contains_is_written_for_the_app_to_evaluate(self):
+        xml, _ = generate(
+            [
+                numeric_row(fieldname="screen_cab_drug2"),
+                case_row(
+                    "exclude", ["when:screen_cab_drug2 contains 99 => 0"], else_value="1"
+                ),
+            ]
+        )
+
+        self.assertIn(("screen_cab_drug2", "contains", "99"), when_attributes(xml))
+
+    def test_does_not_contain_is_written_for_the_app_to_evaluate(self):
+        xml, _ = generate(
+            [
+                numeric_row(fieldname="screen_cab_drug2"),
+                case_row(
+                    "exclude",
+                    ["when:screen_cab_drug2 does not contain 99 => 0"],
+                    else_value="1",
+                ),
+            ]
+        )
+
+        self.assertIn(
+            ("screen_cab_drug2", "does not contain", "99"), when_attributes(xml)
+        )
+
+    def test_contains_is_case_insensitive_and_normalizes_to_lowercase(self):
+        xml, _ = generate(
+            [
+                numeric_row(fieldname="screen_cab_drug2"),
+                case_row(
+                    "exclude", ["when:screen_cab_drug2 Contains 99 => 0"], else_value="1"
+                ),
+            ]
+        )
+
+        self.assertIn(("screen_cab_drug2", "contains", "99"), when_attributes(xml))
 
 
 if __name__ == "__main__":

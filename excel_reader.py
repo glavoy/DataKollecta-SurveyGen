@@ -51,7 +51,12 @@ class ExcelReader:
         r"^(\w+)\s*(?:((?i:not\s+in|in)|>=|<=|!=|<>|=|>|<)\s*)?(.+)$"
     )
     PARAMETER_RE = re.compile(r"^(@?\w+)\s*=\s*(\w+)$")
-    WHEN_CONDITION_RE = re.compile(r"^(\w+)\s+(=|!=|<>|>=|<=|>|<)\s+(.+?)\s*=>\s*(.+)$")
+    # Alternatives are ordered longest-first for the same reason as
+    # FILTER_MATCH_RE above; "does not contain" embeds its own \s+ since it
+    # is three words, not a single token like the other operators.
+    WHEN_CONDITION_RE = re.compile(
+        r"^(\w+)\s+(=|!=|<>|>=|<=|>|<|(?i:does\s+not\s+contain|contains))\s+(.+?)\s*=>\s*(.+)$"
+    )
 
     # Spellings of "automatic". A question's behaviour is decided by its
     # fieldname (reserved variables), by whether it has a calculation, or by
