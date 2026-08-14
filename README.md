@@ -552,6 +552,9 @@ calc:lookup
 field:participant_name
 ```
 
+Copying a `checkbox` field copies every selected value, comma-joined
+(`"1,3"`) — the same form used everywhere else a calculation reads one.
+
 #### 3. SQL Query
 Executes a SQL query against the local database.
 
@@ -616,6 +619,21 @@ For an OR, give the group its own automatic field and test that field instead.
   condition such as `when:sex != 1 => 0` fires — the calculation fails safe.
 - The field is computed when navigation reaches it, so it must sit **below**
   every field it reads.
+- For a `checkbox` field, `=`/`!=` compare against every selected value
+  joined with commas (`"1,3"`), the same form a skip condition uses — **not**
+  membership in the list. This is a plain equality test, so it only does what
+  you want when the value is a choice that excludes the others, such as a
+  "none of these" option enforced by a `logic_check` against the rest of the
+  responses:
+
+  ```
+  calc:case
+  when:screen_cab_drug2 != 99 => 0    # 99 = "not receiving any of these drugs"
+  else:1
+  ```
+
+  There is no `contains` / `does not contain` inside a `case` block — those
+  exist only for skip conditions (see below).
 
 #### 7. Age From Date
 Calculates age in years based on a date field.
