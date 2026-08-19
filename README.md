@@ -35,7 +35,7 @@ A tool for generating XML configuration files and survey manifests from Excel-ba
 
 ## Overview
 
-**GiSTConfigX** reads Excel workbooks containing structured data dictionaries and automatically generates:
+**DataKollecta-SurveyGen** reads Excel workbooks containing structured data dictionaries and automatically generates:
 - **XML configuration files** for each questionnaire/form definition
 - **survey_manifest.gistx** configuration file containing survey metadata and form relationships
 
@@ -81,27 +81,43 @@ The application validates:
 
 ## Installation
 
-1. Clone or download this repository
-2. Open `GistConfigX.sln` in Visual Studio
-3. Restore NuGet packages:
-   - Right-click on the project in Solution Explorer
-   - Select "Manage NuGet Packages"
-   - Install `System.Data.SQLite` if not already installed
-4. Build the solution (Build > Build Solution)
-5. Run the application
+This is a Python command-line tool — no IDE or build step required.
+
+1. Clone this repository.
+2. Install [Python 3.9 or later](https://www.python.org/downloads/) if you don't already have it.
+3. From the repository folder, create a virtual environment and install dependencies:
+
+   **macOS / Linux:**
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+   **Windows:**
+   ```powershell
+   py -m venv .venv
+   .venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+4. Run it:
+
+   ```bash
+   python main.py --config config.json
+   ```
+
+   `--config` defaults to `config.json` in the current folder, so `python main.py` alone works too if you're using the default filename.
+
+A virtual environment isn't portable — if you move or re-clone this repository, recreate `.venv` rather than reuse one from another location.
 
 ### System Requirements
 
-- Windows OS (tested on Windows 10/11)
-- .NET Framework 4.7.2 or higher
-- Microsoft Excel (for Excel Interop functionality)
+- Python 3.9 or later — macOS or Windows
 
 ### Dependencies
 
-- **System.Data.SQLite** (v1.0.119.0)
-- **Microsoft.Office.Interop.Excel**
-- **Newtonsoft.Json**
-- **Windows Forms**
+- **openpyxl** (`>=3.1.0`) — reads the Excel data dictionary. Installed automatically via `requirements.txt`.
 
 ---
 
@@ -111,7 +127,7 @@ Create or edit the `config.json` file in the application directory with the foll
 
 ```json
 {
-  "excelFile": "C:\\GeoffOffline\\GiSTConfigX\\Excel\\prismcss.xlsx",
+  "excelFile": "C:\\PRISM\\Excel\\prismcss.xlsx",
   "outputPath": "C:\\temp\\",
   "surveyName": "PRISM CSS 2025-12-01",
   "surveyId": "prism_css_2025_12_01",
@@ -119,11 +135,13 @@ Create or edit the `config.json` file in the application directory with the foll
 }
 ```
 
+On macOS/Linux, use forward-slash paths instead, e.g. `"excelFile": "/Users/you/PRISM/Excel/prismcss.xlsx"` and `"outputPath": "/tmp/"`.
+
 ### Configuration Parameters
 
 | Parameter | Description | Example |
 |-----------|-------------|---------|
-| `excelFile` | Full path to your Excel data dictionary | `"C:\\GeoffOffline\\GiSTConfigX\\Excel\\prismcss.xlsx"` |
+| `excelFile` | Full path to your Excel data dictionary | `"C:\\PRISM\\Excel\\prismcss.xlsx"` |
 | `outputPath` | Directory where the final zip file and log file will be saved | `"C:\\temp\\"` |
 | `surveyName` | Human-readable survey name displayed in the app | `"PRISM CSS 2025-12-01"` |
 | `surveyId` | Unique survey identifier (lowercase, no spaces) | `"prism_css_2025_12_01"` |
@@ -971,7 +989,7 @@ This field is auto-calculated by the system
 
 
 This section explains how to set up the **`crfs`** worksheet in the Excel data dictionary so that the
-GiSTXConfig app can generate a correct `survey_manifest.gistx`, and so the GiSTX survey app
+DataKollecta-SurveyGen app can generate a correct `survey_manifest.gistx`, and so the DataKollecta survey app
 administers your forms the way you expect.
 
 It covers **three distinct form scenarios**:
@@ -992,7 +1010,7 @@ Excel data dictionary
    └── crfs worksheet          →  the "crfs" array in survey_manifest.gistx
                                        │
                                        ▼
-                         GiSTX app reads survey_manifest.gistx
+                         DataKollecta app reads survey_manifest.gistx
                          and uses the crfs entries to drive
                          navigation, linking, ID generation,
                          and auto-repeat behavior.
@@ -1007,7 +1025,7 @@ Each **row** of the `crfs` worksheet describes **one form** (one table). The col
 - and (optionally) the condition under which it is offered.
 
 A form only appears in the app if its `<tablename>.xml` is included in the manifest's `xmlFiles`
-list (GiSTXConfig handles this automatically when the `_dd` worksheet exists).
+list (DataKollecta-SurveyGen handles this automatically when the `_dd` worksheet exists).
 
 ---
 
@@ -1599,7 +1617,7 @@ The survey manifest file contains metadata about the survey and all forms.
 The `gistlogfile.txt` contains detailed validation results:
 
 ```
-Log file for: C:\GeoffOffline\GiSTConfigX\Excel\prismcss.xlsx
+Log file for: C:\PRISM\Excel\prismcss.xlsx
 
 Checking worksheet: 'hh_info_dd'
 No errors found in 'hh_info_dd'
