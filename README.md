@@ -1,4 +1,4 @@
-# GiSTConfigX - Survey Configuration Generator
+# DataKollecta-SurveyGen - Survey Configuration Generator
 
 A tool for generating XML configuration files and survey manifests from Excel-based data dictionaries. This application streamlines the creation of survey forms for data collection instruments by automating the generation of XML configuration files and survey manifest files.
 

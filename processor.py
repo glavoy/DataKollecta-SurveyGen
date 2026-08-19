@@ -14,7 +14,7 @@ from models import AppConfig, Question, SurveyManifest
 from xml_generator import XmlGenerator
 
 
-class GiSTXProcessor:
+class SurveyGenProcessor:
     def __init__(self, config: AppConfig):
         self.config = config
         self.errorsEncountered = False
@@ -213,5 +213,5 @@ def run_from_config_file(config_file: str | Path) -> int:
         surveyId=data.get("surveyId", ""),
         databaseName=data.get("databaseName", ""),
     )
-    processor = GiSTXProcessor(config)
+    processor = SurveyGenProcessor(config)
     return processor.run()
