@@ -8,6 +8,7 @@ A tool for generating XML configuration files and survey manifests from Excel-ba
 - [How It Works](#how-it-works)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Versioning a survey](#versioning-a-survey)
 - [Creating the Excel Data Dictionary](#creating-the-excel-data-dictionary)
   - [Worksheet Naming Convention](#worksheet-naming-convention)
   - [Column Specifications](#column-specifications)
@@ -131,9 +132,12 @@ Create or edit the `config.json` file in the application directory with the foll
   "outputPath": "C:\\temp\\",
   "surveyName": "PRISM CSS 2025-12-01",
   "surveyId": "prism_css_2025_12_01",
-  "databaseName": "prism_css_2025_12_01.sqlite"
+  "databaseName": "prism_css.sqlite"
 }
 ```
+
+Note that `databaseName` carries **no date**, while `surveyName` and `surveyId` do. That
+difference is deliberate and load-bearing — see [Versioning a survey](#versioning-a-survey).
 
 On macOS/Linux, use forward-slash paths instead, e.g. `"excelFile": "/Users/you/PRISM/Excel/prismcss.xlsx"` and `"outputPath": "/tmp/"`.
 
@@ -143,14 +147,88 @@ On macOS/Linux, use forward-slash paths instead, e.g. `"excelFile": "/Users/you/
 |-----------|-------------|---------|
 | `excelFile` | Full path to your Excel data dictionary | `"C:\\PRISM\\Excel\\prismcss.xlsx"` |
 | `outputPath` | Directory where the final zip file and log file will be saved | `"C:\\temp\\"` |
-| `surveyName` | Human-readable survey name displayed in the app | `"PRISM CSS 2025-12-01"` |
-| `surveyId` | Unique survey identifier (lowercase, no spaces) | `"prism_css_2025_12_01"` |
-| `databaseName` | SQLite database filename written to `survey_manifest.gistx` | `"prism_css_2025_12_01.sqlite"` |
+| `surveyName` | Human-readable survey name displayed in the app. **Change every revision** | `"PRISM CSS 2025-12-01"` |
+| `surveyId` | Unique survey identifier (lowercase, no spaces). **Change every revision** | `"prism_css_2025_12_01"` |
+| `databaseName` | SQLite database filename written to `survey_manifest.gistx`. **Never change it once data has been collected** | `"prism_css.sqlite"` |
 
 **Notes:**
 - The application creates a zip file containing all XML files, the survey_manifest.gistx file, and any CSV files used for dynamic responses
 - The log file (`gistlogfile.txt`) is written to the `outputPath` directory
 - The database name is read from `databaseName` in `config.json`
+
+---
+
+## Versioning a survey
+
+A survey is revised many times over a study's life — a question is reworded, a response option
+is added, a `repeat_enforce_count` is changed. Each revision produces a new zip that is
+installed over the previous one on devices that may already hold collected data. Two of the
+three identifiers in `config.json` exist to describe *this revision*; the third exists to
+describe *the study*, and confusing them destroys data.
+
+| Field | Role | On a new revision |
+|---|---|---|
+| `surveyName` | What the interviewer sees in the app's survey list | **Change it** — carry the revision date |
+| `surveyId` | Identifies the revision; the app stores each one in its own folder | **Change it** — carry the revision date |
+| `databaseName` | Names the SQLite file holding **all collected data for the study** | **Never change it** |
+
+### `databaseName` must never change
+
+This is the one rule that cannot be broken. The app creates its database from `databaseName`,
+so a new name means a **new, empty database** — and generated IDs are derived by taking the
+highest existing value in that database and adding one. An empty database restarts the
+counter:
+
+```
+prism_css.sqlite  already holds  hhid 3010001, 3010002, 3010003
+   |
+   |  new zip deployed with databaseName "prism_css_2026_08_20.sqlite"
+   v
+prism_css_2026_08_20.sqlite is created empty
+   next household enrolled gets hhid 3010001   <-- DUPLICATE
+```
+
+The duplicates are not detected at entry — each device is internally consistent — and only
+surface when data is pooled, by which time the interviews have happened. The old database is
+also left behind on the device, so previously collected records stop syncing.
+
+So `databaseName` names the **study**, not the revision: `prism_css.sqlite` stays put for the
+life of the study, no matter how many times the dictionary is regenerated. Only add a year (
+`prism_css_2026.sqlite`) if a genuinely new round is starting that is *meant* to begin its ID
+counters afresh.
+
+See `DataKollecta/docs/DATABASE_VERSIONING_DECISIONS.md` in the app repository for the full
+analysis.
+
+### Revising a survey
+
+1. Edit the Excel data dictionary.
+2. In `config.json`, set `surveyName` and `surveyId` to the new revision date. Leave
+   `databaseName` **exactly as it was**.
+3. `python main.py`
+4. Check `gistlogfile.txt` — a survey that failed validation still writes a zip for the
+   worksheets that passed, so a clean log is the only proof the package is complete.
+5. Deploy the zip and record what went out: the revision date, what changed, and which devices
+   received it. The app records `survey_id` on every collected record, so this is what lets you
+   tell later which revision a given record was collected under.
+
+Keep `config.json` per study rather than editing one shared file — `config_prism_css.json` and
+`config_r21.json` in this repository are that pattern. It keeps each study's `databaseName`
+where it cannot be edited by accident while working on another study.
+
+### Choosing a revision identifier
+
+Dates, not semantic versions. A survey revision is not software: there is no meaningful
+distinction between a "minor" and a "patch" change to a questionnaire, and the question anyone
+actually asks about a collected record is *when* was this version in the field.
+
+```
+prism_css_2026_08_20     ->  prism_css_2026_09_14     ->  prism_css_2026_11_02
+```
+
+Use `YYYY_MM_DD` in `surveyId` (lowercase, underscores — it becomes a folder name) and
+`YYYY-MM-DD` in `surveyName`, matching the existing packages. If two revisions go out on one
+day, add a suffix: `prism_css_2026_08_20b`.
 
 ---
 
@@ -1609,7 +1687,7 @@ The survey manifest file contains metadata about the survey and all forms.
 {
   "surveyName": "PRISM CSS 2025-12-01",
   "surveyId": "prism_css_2025_12_01",
-  "databaseName": "prism_css_2025_12_01.sqlite",
+  "databaseName": "prism_css.sqlite",
   "xmlFiles": [
     "hh_info.xml",
     "hh_members.xml",
