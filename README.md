@@ -1368,11 +1368,19 @@ This generates IDs like: `301050001` (no auto-increment — every part comes fro
 `incrementLength`'s counter is a **local** count — the app looks at what's already on *this
 device*. Reinstalling the app deletes its local data, so the counter silently restarts at 1,
 and a freshly generated ID can collide with one already generated (and possibly already
-synced) before the reinstall. `yy` (two-digit year, e.g. `26`) and `ddd` (day of year,
-`001`–`366`) exist to shrink that risk: fold them into `idconfig.fields` alongside an
+synced) before the reinstall. `yy` (two-digit year) and `ddd` (day of year, zero-padded to
+three digits) exist to shrink that risk: fold them into `idconfig.fields` alongside an
 interviewer/device code, and the counter only has to stay collision-free **within one
 interviewer's one calendar day**, since any reinstall-and-collide requires reusing the exact
 same day *and* interviewer, not just the same device ever.
+
+**Exact format**, both zero-padded, no other formatting applied:
+- `yy` = `year % 100` — `2026` → `"26"`, `2001` → `"01"`. **A given `yy` value repeats every
+  century** (`2000` and `2100` are both `"00"`) — a real ambiguity, not a bug; acceptable
+  because no study spans a century, but worth knowing before reading `yy` back out of old
+  data years later.
+- `ddd` = the ordinal day within the calendar year, `"001"` (Jan 1) through `"365"`/`"366"`
+  (Dec 31, depending on leap year) — e.g. Feb 1 is day 32 → `"032"`.
 
 **Example 3: With a daily-resetting date component**
 ```json
@@ -1392,9 +1400,12 @@ counter's base) changes daily.
 
 **`yy`/`ddd` need no `calc:` block, and must not be given one.** Declare them as ordinary
 `FieldType='automatic'` rows with a **blank** `Responses` column — same as `nn`/any other
-field already used in `idconfig.fields` — and reference them by name in `idconfig.fields`.
-That's what exempts them from the "every automatic field needs a `calc:` block" check (see
-[Reserved Automatic Variables](#reserved-automatic-variables) above); no other change is
+field already used in `idconfig.fields` — and reference them by name in `idconfig.fields`
+wherever you want them to appear in the ID. The generator recognizes `yy`/`ddd` by field name
+alone and exempts them from the "every automatic field needs a `calc:` block" check (see
+[Reserved Automatic Variables](#reserved-automatic-variables) above) **on any worksheet** —
+not only the table whose own `idconfig` happens to reference them, so a `yy`/`ddd` row is
+equally valid on a repeating child form with no `idconfig` of its own. No other change is
 needed. The app computes their values itself, the same way it already computes `startdate`.
 
 Do **not** try to build these with `calc:constant value:NOW_YEAR` or similar — a `calc:`
