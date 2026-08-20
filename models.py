@@ -44,6 +44,20 @@ RESERVED_SYSTEM_FIELDS: frozenset[str] = (
     LEADING_SYSTEM_FIELD_NAMES | TRAILING_SYSTEM_FIELD_NAMES
 )
 
+# Unlike RESERVED_SYSTEM_FIELDS, these are NOT auto-injected -- a dictionary
+# still has to declare a row for one, since the app has to compute it at a
+# form-specific position (immediately before whichever field's idconfig
+# reads it), which is neither of the two fixed slots above. What they share
+# with the reserved set is that the app already knows how to compute them by
+# name (see AutoFields._registry in the app repo), on ANY form, regardless of
+# whether that form's own idconfig references them -- yy/ddd are stamped on a
+# repeating child form just as validly as on the base form whose idconfig
+# actually consumes them, e.g. to protect that child form's own generated key
+# the same way, or simply because the study wants the date visible on every
+# table. So a declared row for one of these needs no `calc:` block on ANY
+# worksheet, not only the one table happens to name it in idconfig.fields.
+KNOWN_AUTOMATIC_FIELDS: frozenset[str] = frozenset({"yy", "ddd"})
+
 
 class ResponseSourceType(str, Enum):
     STATIC = "Static"

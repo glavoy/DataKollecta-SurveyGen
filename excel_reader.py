@@ -7,6 +7,7 @@ from typing import Any
 from openpyxl.worksheet.worksheet import Worksheet
 
 from models import (
+    KNOWN_AUTOMATIC_FIELDS,
     RESERVED_SYSTEM_FIELDS,
     TRAILING_SYSTEM_FIELD_NAMES,
     CalculationParameter,
@@ -851,7 +852,11 @@ class ExcelReader:
             if question.questionType != "automatic":
                 continue
             name = question.fieldName.lower()
-            if name in self.BUILT_IN_AUTO_FIELDS or name in self.suppliedAutoFields:
+            if (
+                name in self.BUILT_IN_AUTO_FIELDS
+                or name in self.suppliedAutoFields
+                or name in KNOWN_AUTOMATIC_FIELDS
+            ):
                 continue
             if question.calculationType != CalculationType.NONE:
                 continue

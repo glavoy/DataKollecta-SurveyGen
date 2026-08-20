@@ -96,6 +96,21 @@ class AutomaticNeedsCalculationTests(unittest.TestCase):
 
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
 
+    def test_yy_and_ddd_are_exempt_regardless_of_idconfig(self):
+        # The bug this guards against: yy/ddd are exempt via
+        # KNOWN_AUTOMATIC_FIELDS, not via `supplied` (idconfig.fields) --
+        # they must not error on a worksheet whose table has no idconfig at
+        # all, e.g. a repeating child form linked by its parent's key rather
+        # than ID-generated. No `supplied` set is passed here on purpose.
+        reader = read(
+            [
+                row("yy", "automatic", "text"),
+                row("ddd", "automatic", "text"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
     def test_fields_supplied_by_the_manifest_are_exempt(self):
         # hhid and linenum come from the crfs linking/increment fields.
         reader = read(
