@@ -1336,11 +1336,48 @@ parent form. For one-off sister forms, leave them blank.
 |-------|----------|
 | `0` | **Flexible.** Any number of children allowed; no check. |
 | `1` | **Warn** *(default if blank)*. On mismatch, warn and offer to update the parent's count to the actual number entered. |
-| `2` | **Force.** Block exit until exactly the stated number of children are entered (an "Exit Anyway" escape may still be shown). |
+| `2` | **Force.** Block exit until exactly the stated number of children are entered. There is **no** "Exit Anyway" escape in this mode. |
 | `3` | **Auto-sync.** Silently update the parent's count field to match the number actually entered. |
 
 **Typical repeating setup:** `repeat_count_field=nmembers`, `auto_start_repeat=2`,
 `repeat_enforce_count=2`.
+
+#### When the count is reconciled
+
+Modes `1` and `3` reconcile the parent's count in two places:
+
+1. **When the auto-repeat loop ends** — whether the interviewer completed every child or
+   left early.
+2. **Whenever a child record is saved outside that loop** — one added later through
+   *New Survey → \<child form\> → pick the parent ID*, or an existing one edited through
+   *Modify Existing Survey*. This is what keeps `nmembers` correct when a seventh household
+   member turns up weeks after enrolment.
+
+Mode `2` is enforced only inside the loop, because there is nothing to block outside it.
+
+#### The count question's own range is never violated
+
+Before writing, the app checks the actual number of children against the **`LowerRange`** and
+**`UpperRange`** the count question declares in its `_dd` worksheet — the same check the
+interviewer's typed answer has to pass, `Responses`-style exceptions included. The count is
+**not** written when:
+
+- **Fewer children than `LowerRange`.** `nmembers` declared as `1..30` can never be
+  auto-synced to `0`. Inside the repeat loop the interviewer is told they must enter at
+  least that many and cannot leave until they have; outside it, nothing is written.
+- **More children than `UpperRange`.** The interviewer is warned and the data left for
+  correction, rather than storing an impossible count.
+- **The count question was skipped**, so its value is NULL. A skip stores NULL, and NULL is
+  left alone — a household that answered "no" to `havenets` keeps `nnets` empty even if a
+  net record is later added by hand.
+
+A count question with no `numeric_check` (no `LowerRange`/`UpperRange` in its `_dd` row) has
+no floor or ceiling, and reconciles unconditionally.
+
+**Design note:** to require at least *N* children of a form, set `LowerRange` on its count
+question. There is no separate "minimum entries" column on `crfs`, deliberately — the
+minimum belongs next to the question it constrains, and one declaration cannot drift out of
+step with another.
 
 ---
 
@@ -1348,6 +1385,11 @@ parent form. For one-off sister forms, leave them blank.
 
 - **Blank ≠ zero only where noted.** Most columns treat blank as "off/none". `display_order` blank
   is treated as `0`; `repeat_enforce_count` blank defaults to `1` (warn).
+- **`repeat_enforce_count` does nothing unless `auto_start_repeat` is `1` or `2`.** The loop is
+  what triggers reconciliation after the parent is saved; with `auto_start_repeat=0` there is no
+  loop, and the count is only reconciled if a child is later saved on its own.
+- **`repeat_enforce_count` never writes a count outside the count question's declared
+  `LowerRange`/`UpperRange`**, and never fills in a count question that was skipped. See §9.
 - **`entry_condition` needs `requireslink=1`** to have any effect.
 - **`entry_condition` is equality-only** and string-compared — store the compared value exactly
   (`1`, not `1.0`).
