@@ -1363,6 +1363,52 @@ This generates IDs like: `301050001` (no auto-increment — every part comes fro
 > **One-off children (Scenario C) normally omit `idconfig`** — their key is the inherited
 > `linkingfield` value, not a freshly generated ID.
 
+#### `yy` / `ddd`: date fields that survive an app reinstall
+
+`incrementLength`'s counter is a **local** count — the app looks at what's already on *this
+device*. Reinstalling the app deletes its local data, so the counter silently restarts at 1,
+and a freshly generated ID can collide with one already generated (and possibly already
+synced) before the reinstall. `yy` (two-digit year, e.g. `26`) and `ddd` (day of year,
+`001`–`366`) exist to shrink that risk: fold them into `idconfig.fields` alongside an
+interviewer/device code, and the counter only has to stay collision-free **within one
+interviewer's one calendar day**, since any reinstall-and-collide requires reusing the exact
+same day *and* interviewer, not just the same device ever.
+
+**Example 3: With a daily-resetting date component**
+```json
+{
+  "prefix": "GX",
+  "fields": [
+    {"name": "nn", "length": 2},
+    {"name": "yy", "length": 2},
+    {"name": "ddd", "length": 3}
+  ],
+  "incrementLength": 2
+}
+```
+Generates IDs like `GX07260451` — interviewer `07`, year `20`**`26`**, day-of-year
+`045`, then a 2-digit increment that resets every day since `fields` (and therefore the
+counter's base) changes daily.
+
+**`yy`/`ddd` need no `calc:` block, and must not be given one.** Declare them as ordinary
+`FieldType='automatic'` rows with a **blank** `Responses` column — same as `nn`/any other
+field already used in `idconfig.fields` — and reference them by name in `idconfig.fields`.
+That's what exempts them from the "every automatic field needs a `calc:` block" check (see
+[Reserved Automatic Variables](#reserved-automatic-variables) above); no other change is
+needed. The app computes their values itself, the same way it already computes `startdate`.
+
+Do **not** try to build these with `calc:constant value:NOW_YEAR` or similar — a `calc:`
+field is only protected from being recomputed mid-edit if its survey explicitly marks it
+`preserve: true`, which nothing in this generator currently emits. Without that protection,
+editing an existing record on a later day (or in a later year) would silently mint a **new**
+subject ID for the same person. `yy`/`ddd` avoid this entirely: like `starttime`/`startdate`,
+the app preserves a stored value unconditionally, with no flag to forget.
+
+This is a **risk reduction, not a guarantee** — a reinstall followed by continued
+interviewing on the *same* day can still collide. It is not related to `databaseName`
+(see [Versioning a survey](#versioning-a-survey)) — this changes what an ID is built from,
+not which database the record lands in.
+
 ---
 
 ### 8. `entry_condition` reference (when is a form offered?)
