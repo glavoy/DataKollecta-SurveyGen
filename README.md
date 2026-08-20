@@ -15,6 +15,7 @@ A tool for generating XML configuration files and survey manifests from Excel-ba
     - [FieldName](#fieldname)
     - [QuestionType](#questiontype)
     - [Reserved Automatic Variables](#reserved-automatic-variables)
+    - [Computed Automatic Variables (yy, ddd)](#computed-automatic-variables-yy-ddd)
     - [FieldType](#fieldtype)
     - [QuestionText](#questiontext)
     - [MaxCharacters](#maxcharacters)
@@ -365,6 +366,46 @@ to whoever analyses the data — that is a perfectly good reason to leave them i
 The one thing to avoid is giving a reserved variable a `calc:` block: the calculation is
 **dropped**, not applied, because the app supplies the value itself. The generator warns
 when this happens. If you need a value of your own, use a different FieldName.
+
+**Not the same thing as `yy`/`ddd`**, below — those are automatic too, and the app computes
+them the same way, but you still have to declare them yourself; nothing writes them in for
+you.
+
+---
+
+### Computed Automatic Variables (yy, ddd)
+
+Like the reserved variables above, these `FieldName`s have built-in meaning and take no
+`calc:` block or validation — but unlike them, **the generator does not write these in for
+you.** You have to declare a row for each one, exactly where you want it in the questionnaire.
+
+| FieldName | What it computes | Format |
+|-----------|-------------------|--------|
+| `yy` | the current two-digit year | `year % 100`, zero-padded to 2 — `2026` → `"26"` |
+| `ddd` | the ordinal day within the current calendar year | zero-padded to 3 — `"001"` (Jan 1) through `"365"`/`"366"` (Dec 31) |
+
+**Worked examples:** `2001` → `"01"`; Feb 1 → day 32 → `"032"`.
+
+**A given `yy` repeats every century** — `2000` and `2100` are both `"00"`. A real ambiguity,
+not a bug: acceptable because no study spans a century, but worth knowing before reading
+`yy` back out of old data years later.
+
+**Why they aren't reserved.** The generator's auto-injection only knows two fixed positions —
+before the first question, or after the last one (see above) — which fits a value every
+record needs, computed at a fixed moment. `yy`/`ddd` don't fit that: they're useful anywhere
+a survey wants "today," and their most common use is sitting immediately before a specific
+`idconfig`-generated ID field, a position the generator has no way to infer on its own. So
+they're declared like an ordinary field instead — a plain `FieldType='automatic'` row with a
+**blank** `Responses` column, no `calc:` block, on **any** worksheet, not only a table that
+happens to use them in its own `idconfig`.
+
+**Do not build these with `calc:constant value:NOW_YEAR` or similar.** A `calc:` field is
+only protected from being recomputed mid-edit if its survey explicitly marks it
+`preserve: true`, which nothing in this generator currently emits. `yy`/`ddd` avoid that
+risk because, like `starttime`/`startdate`, the app preserves an already-stored value
+unconditionally, with no flag to forget — see the worked ID example in
+[§7, `idconfig` reference](#7-idconfig-reference-id-generation), where a reinstall-resilient
+subject ID is exactly why this pair exists.
 
 ---
 
@@ -1363,26 +1404,18 @@ This generates IDs like: `301050001` (no auto-increment — every part comes fro
 > **One-off children (Scenario C) normally omit `idconfig`** — their key is the inherited
 > `linkingfield` value, not a freshly generated ID.
 
-#### `yy` / `ddd`: date fields that survive an app reinstall
+**Example 3: A reinstall-resilient ID, using `yy` / `ddd`**
 
 `incrementLength`'s counter is a **local** count — the app looks at what's already on *this
 device*. Reinstalling the app deletes its local data, so the counter silently restarts at 1,
 and a freshly generated ID can collide with one already generated (and possibly already
-synced) before the reinstall. `yy` (two-digit year) and `ddd` (day of year, zero-padded to
-three digits) exist to shrink that risk: fold them into `idconfig.fields` alongside an
-interviewer/device code, and the counter only has to stay collision-free **within one
-interviewer's one calendar day**, since any reinstall-and-collide requires reusing the exact
-same day *and* interviewer, not just the same device ever.
+synced) before the reinstall. Folding
+[`yy`/`ddd`](#computed-automatic-variables-yy-ddd) into `idconfig.fields` alongside an
+interviewer/device code shrinks that risk: the counter only has to stay collision-free
+**within one interviewer's one calendar day**, since a collision now requires reusing the
+exact same day *and* interviewer, not just the same device ever — a real, if partial, risk
+reduction, not a guarantee.
 
-**Exact format**, both zero-padded, no other formatting applied:
-- `yy` = `year % 100` — `2026` → `"26"`, `2001` → `"01"`. **A given `yy` value repeats every
-  century** (`2000` and `2100` are both `"00"`) — a real ambiguity, not a bug; acceptable
-  because no study spans a century, but worth knowing before reading `yy` back out of old
-  data years later.
-- `ddd` = the ordinal day within the calendar year, `"001"` (Jan 1) through `"365"`/`"366"`
-  (Dec 31, depending on leap year) — e.g. Feb 1 is day 32 → `"032"`.
-
-**Example 3: With a daily-resetting date component**
 ```json
 {
   "prefix": "GX",
@@ -1398,27 +1431,10 @@ Generates IDs like `GX07260451` — interviewer `07`, year `20`**`26`**, day-of-
 `045`, then a 2-digit increment that resets every day since `fields` (and therefore the
 counter's base) changes daily.
 
-**`yy`/`ddd` need no `calc:` block, and must not be given one.** Declare them as ordinary
-`FieldType='automatic'` rows with a **blank** `Responses` column — same as `nn`/any other
-field already used in `idconfig.fields` — and reference them by name in `idconfig.fields`
-wherever you want them to appear in the ID. The generator recognizes `yy`/`ddd` by field name
-alone and exempts them from the "every automatic field needs a `calc:` block" check (see
-[Reserved Automatic Variables](#reserved-automatic-variables) above) **on any worksheet** —
-not only the table whose own `idconfig` happens to reference them, so a `yy`/`ddd` row is
-equally valid on a repeating child form with no `idconfig` of its own. No other change is
-needed. The app computes their values itself, the same way it already computes `startdate`.
-
-Do **not** try to build these with `calc:constant value:NOW_YEAR` or similar — a `calc:`
-field is only protected from being recomputed mid-edit if its survey explicitly marks it
-`preserve: true`, which nothing in this generator currently emits. Without that protection,
-editing an existing record on a later day (or in a later year) would silently mint a **new**
-subject ID for the same person. `yy`/`ddd` avoid this entirely: like `starttime`/`startdate`,
-the app preserves a stored value unconditionally, with no flag to forget.
-
-This is a **risk reduction, not a guarantee** — a reinstall followed by continued
-interviewing on the *same* day can still collide. It is not related to `databaseName`
-(see [Versioning a survey](#versioning-a-survey)) — this changes what an ID is built from,
-not which database the record lands in.
+See [Computed Automatic Variables](#computed-automatic-variables-yy-ddd) above for how to
+declare `yy`/`ddd`, their exact format, and why they must not be given a `calc:` block. This
+is unrelated to `databaseName` (see [Versioning a survey](#versioning-a-survey)) — this
+changes what an ID is built from, not which database the record lands in.
 
 ---
 
