@@ -396,12 +396,6 @@ opened.
 not a bug: acceptable because no study spans a century, but worth knowing before reading
 `yy` back out of old data years later.
 
-**Why `doy`, not `ddd`.** `ddd` for day-of-year isn't an existing convention anywhere —
-POSIX/`strftime` uses `%j`, R uses `yday()` — and it actively collides with a *different*,
-real meaning: Excel's own custom date-format codes use `ddd` for the abbreviated weekday name
-(`Mon`, `Tue`), in the exact tool used to author these dictionaries. `doy` has no such
-collision.
-
 **Why they aren't reserved.** The generator's auto-injection only knows two fixed positions —
 before the first question, or after the last one (see above) — which fits a value every
 record needs, computed at a fixed moment. These fields don't fit that: they're useful
@@ -411,21 +405,25 @@ they're declared like an ordinary field instead — a plain `FieldType='automati
 **blank** `Responses` column, no `calc:` block, on **any** worksheet, not only a table that
 happens to use one of them in its own `idconfig`.
 
-**Do not build these with `calc:constant value:NOW_YEAR` or similar.** A `calc:` field is
-only protected from being recomputed mid-edit if its survey explicitly marks it
-`preserve: true`, which nothing in this generator currently emits. These fields avoid that
-risk because, like `starttime`/`startdate`, the app preserves an already-stored value
-unconditionally, with no flag to forget — see the worked ID example in
-[§7, `idconfig` reference](#7-idconfig-reference-id-generation), where a reinstall-resilient
-subject ID is one reason this family exists.
+**Automatic vs. `calc:`.** These five fields work like `startdate`: set once and never
+recomputed, even if the record is later edited. If you instead want a component pulled from
+some *other* date the survey collects — `dob`, an appointment date, anything but today — use
+the `date_part` calculation type in [Automatic Calculations](#automatic-calculations) below.
+It shares the same five unit tokens, but reads a named field and recomputes it whenever that
+field's value changes, since it's meant to track its source rather than freeze at first use.
 
-**Want a component from a date *other* than today** — `dob`, an appointment date, anything
-else the survey collects? These fields can't do that; use the `date_part` calculation type
-instead, in [Automatic Calculations](#automatic-calculations) below. It shares the same five
-unit tokens, but extracts from a named field and recomputes whenever that field changes,
-unless the survey marks it `preserve: true` — the opposite default from this section, and
-correct for that use case: these five fields are for a value that must never drift once set,
-`date_part` is for a value meant to track its source.
+**Example — Computed Automatic Variable**, feeding a reinstall-resilient subject ID (full
+version in [§7](#7-idconfig-reference-id-generation)):
+
+| FieldName | QuestionType | FieldType | Responses | Purpose |
+|-----------|--------------|-----------|-----------|---------|
+| `doy` | `automatic` | `text` | *(blank)* | Records today's day-of-year once, the first time the row is reached, and never recomputes — including on a later edit. That's what lets `idconfig.fields` use it as a stable piece of the subject ID. |
+
+**Example — `date_part` calc field**, reporting the year a participant enrolled:
+
+| FieldName | QuestionType | FieldType | Responses | Purpose |
+|-----------|--------------|-----------|-----------|---------|
+| `enroll_year` | `automatic` | `text` | `calc:date_part`<br>`field:enroll_date`<br>`unit:yyyy` | Extracts the year from the survey's own `enroll_date` field. If `enroll_date` is later corrected, `enroll_year` recomputes to match — it tracks its source rather than freezing, the opposite of the `doy` example above. |
 
 ---
 
