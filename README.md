@@ -15,7 +15,7 @@ A tool for generating XML configuration files and survey manifests from Excel-ba
     - [FieldName](#fieldname)
     - [QuestionType](#questiontype)
     - [Reserved Automatic Variables](#reserved-automatic-variables)
-    - [Computed Automatic Variables (yy, ddd)](#computed-automatic-variables-yy-ddd)
+    - [Computed Automatic Variables (yyyy, yy, mm, dd, doy)](#computed-automatic-variables-yyyy-yy-mm-dd-doy)
     - [FieldType](#fieldtype)
     - [QuestionText](#questiontext)
     - [MaxCharacters](#maxcharacters)
@@ -367,45 +367,65 @@ The one thing to avoid is giving a reserved variable a `calc:` block: the calcul
 **dropped**, not applied, because the app supplies the value itself. The generator warns
 when this happens. If you need a value of your own, use a different FieldName.
 
-**Not the same thing as `yy`/`ddd`**, below — those are automatic too, and the app computes
-them the same way, but you still have to declare them yourself; nothing writes them in for
-you.
+**Not the same thing as `yyyy`/`yy`/`mm`/`dd`/`doy`**, below — those are automatic too, and
+the app computes them the same way, but you still have to declare them yourself; nothing
+writes them in for you.
 
 ---
 
-### Computed Automatic Variables (yy, ddd)
+### Computed Automatic Variables (yyyy, yy, mm, dd, doy)
 
 Like the reserved variables above, these `FieldName`s have built-in meaning and take no
 `calc:` block or validation — but unlike them, **the generator does not write these in for
-you.** You have to declare a row for each one, exactly where you want it in the questionnaire.
+you.** You have to declare a row for each one, exactly where you want it in the
+questionnaire. Each is computed once, from *today's* date, and never recomputed — the
+"today" is fixed the moment the row is first reached, not re-read every time the record is
+opened.
 
 | FieldName | What it computes | Format |
 |-----------|-------------------|--------|
+| `yyyy` | the current four-digit year | zero-padded to 4 — `"2026"` |
 | `yy` | the current two-digit year | `year % 100`, zero-padded to 2 — `2026` → `"26"` |
-| `ddd` | the ordinal day within the current calendar year | zero-padded to 3 — `"001"` (Jan 1) through `"365"`/`"366"` (Dec 31) |
+| `mm` | the current month | zero-padded to 2 — `"01"`–`"12"` |
+| `dd` | the current day of the month | zero-padded to 2 — `"01"`–`"31"` |
+| `doy` | the ordinal day within the current calendar year | zero-padded to 3 — `"001"` (Jan 1) through `"365"`/`"366"` (Dec 31) |
 
-**Worked examples:** `2001` → `"01"`; Feb 1 → day 32 → `"032"`.
+**Worked examples:** `2001` → `yy` `"01"`; Feb 1 → `doy` `"032"`.
 
 **A given `yy` repeats every century** — `2000` and `2100` are both `"00"`. A real ambiguity,
 not a bug: acceptable because no study spans a century, but worth knowing before reading
 `yy` back out of old data years later.
 
+**Why `doy`, not `ddd`.** `ddd` for day-of-year isn't an existing convention anywhere —
+POSIX/`strftime` uses `%j`, R uses `yday()` — and it actively collides with a *different*,
+real meaning: Excel's own custom date-format codes use `ddd` for the abbreviated weekday name
+(`Mon`, `Tue`), in the exact tool used to author these dictionaries. `doy` has no such
+collision.
+
 **Why they aren't reserved.** The generator's auto-injection only knows two fixed positions —
 before the first question, or after the last one (see above) — which fits a value every
-record needs, computed at a fixed moment. `yy`/`ddd` don't fit that: they're useful anywhere
-a survey wants "today," and their most common use is sitting immediately before a specific
+record needs, computed at a fixed moment. These fields don't fit that: they're useful
+anywhere a survey wants "today," and one common use is sitting immediately before a specific
 `idconfig`-generated ID field, a position the generator has no way to infer on its own. So
 they're declared like an ordinary field instead — a plain `FieldType='automatic'` row with a
 **blank** `Responses` column, no `calc:` block, on **any** worksheet, not only a table that
-happens to use them in its own `idconfig`.
+happens to use one of them in its own `idconfig`.
 
 **Do not build these with `calc:constant value:NOW_YEAR` or similar.** A `calc:` field is
 only protected from being recomputed mid-edit if its survey explicitly marks it
-`preserve: true`, which nothing in this generator currently emits. `yy`/`ddd` avoid that
+`preserve: true`, which nothing in this generator currently emits. These fields avoid that
 risk because, like `starttime`/`startdate`, the app preserves an already-stored value
 unconditionally, with no flag to forget — see the worked ID example in
 [§7, `idconfig` reference](#7-idconfig-reference-id-generation), where a reinstall-resilient
-subject ID is exactly why this pair exists.
+subject ID is one reason this family exists.
+
+**Want a component from a date *other* than today** — `dob`, an appointment date, anything
+else the survey collects? These fields can't do that; use the `date_part` calculation type
+instead, in [Automatic Calculations](#automatic-calculations) below. It shares the same five
+unit tokens, but extracts from a named field and recomputes whenever that field changes,
+unless the survey marks it `preserve: true` — the opposite default from this section, and
+correct for that use case: these five fields are for a value that must never drift once set,
+`date_part` is for a value meant to track its source.
 
 ---
 
@@ -825,6 +845,29 @@ field:admission_date
 value:today
 unit:d
 ```
+
+#### 11. Date Part (Extract)
+Extracts a single component from a date field.
+
+**Parameters:**
+- `field`: The date field to extract from (or `today`)
+- `unit`: Which component (`yyyy`=4-digit year, `yy`=2-digit year, `mm`=month, `dd`=day,
+  `doy`=day of year)
+
+```
+calc:date_part
+field:dob
+unit:mm
+```
+
+Not the same thing as the [Computed Automatic Variables](#computed-automatic-variables-yyyy-yy-mm-dd-doy)
+`yyyy`/`yy`/`mm`/`dd`/`doy` fields, which take no `calc:` block at all and always mean
+"today," fixed forever once set. This extracts from *any* named date field and, like every
+`calc:` field in this generator, recomputes on every edit — there is currently no way to
+author `preserve: true` from the Excel dictionary at all (a pre-existing gap in the
+generator, not specific to this type). If a value needs to survive an edit unchanged, a
+Computed Automatic Variable is the only option that does that today; use `date_part` when
+tracking a live source field is exactly what you want.
 
 ---
 
@@ -1404,14 +1447,14 @@ This generates IDs like: `301050001` (no auto-increment — every part comes fro
 > **One-off children (Scenario C) normally omit `idconfig`** — their key is the inherited
 > `linkingfield` value, not a freshly generated ID.
 
-**Example 3: A reinstall-resilient ID, using `yy` / `ddd`**
+**Example 3: A reinstall-resilient ID, using `yy` / `doy`**
 
 `incrementLength`'s counter is a **local** count — the app looks at what's already on *this
 device*. Reinstalling the app deletes its local data, so the counter silently restarts at 1,
 and a freshly generated ID can collide with one already generated (and possibly already
 synced) before the reinstall. Folding
-[`yy`/`ddd`](#computed-automatic-variables-yy-ddd) into `idconfig.fields` alongside an
-interviewer/device code shrinks that risk: the counter only has to stay collision-free
+[`yy`/`doy`](#computed-automatic-variables-yyyy-yy-mm-dd-doy) into `idconfig.fields` alongside
+an interviewer/device code shrinks that risk: the counter only has to stay collision-free
 **within one interviewer's one calendar day**, since a collision now requires reusing the
 exact same day *and* interviewer, not just the same device ever — a real, if partial, risk
 reduction, not a guarantee.
@@ -1422,7 +1465,7 @@ reduction, not a guarantee.
   "fields": [
     {"name": "nn", "length": 2},
     {"name": "yy", "length": 2},
-    {"name": "ddd", "length": 3}
+    {"name": "doy", "length": 3}
   ],
   "incrementLength": 2
 }
@@ -1431,8 +1474,8 @@ Generates IDs like `GX07260451` — interviewer `07`, year `20`**`26`**, day-of-
 `045`, then a 2-digit increment that resets every day since `fields` (and therefore the
 counter's base) changes daily.
 
-See [Computed Automatic Variables](#computed-automatic-variables-yy-ddd) above for how to
-declare `yy`/`ddd`, their exact format, and why they must not be given a `calc:` block. This
+See [Computed Automatic Variables](#computed-automatic-variables-yyyy-yy-mm-dd-doy) above for how to
+declare `yy`/`doy`, their exact format, and why they must not be given a `calc:` block. This
 is unrelated to `databaseName` (see [Versioning a survey](#versioning-a-survey)) — this
 changes what an ID is built from, not which database the record lands in.
 

@@ -1060,13 +1060,14 @@ class ExcelReader:
                     "age_at_date": CalculationType.AGE_AT_DATE,
                     "date_offset": CalculationType.DATE_OFFSET,
                     "date_diff": CalculationType.DATE_DIFF,
+                    "date_part": CalculationType.DATE_PART,
                 }
                 if current_calc in mapping:
                     question.calculationType = mapping[current_calc]
                 else:
                     self._error(
                         f"ERROR - Calculation: Invalid calculation type '{value}' for FieldName '{fieldname}' in worksheet '{worksheet}'. "
-                        "Must be 'query', 'case', 'constant', 'lookup', 'math', 'concat', 'age_from_date', 'age_at_date', 'date_offset', or 'date_diff'."
+                        "Must be 'query', 'case', 'constant', 'lookup', 'math', 'concat', 'age_from_date', 'age_at_date', 'date_offset', 'date_diff', or 'date_part'."
                     )
             elif key == "sql":
                 question.calculationQuerySql = value
@@ -1081,11 +1082,21 @@ class ExcelReader:
                 if current_calc in {"constant", "age_from_date", "age_at_date", "date_offset", "date_diff"}:
                     question.calculationConstantValue = value
             elif key == "field":
-                if current_calc in {"lookup", "age_from_date", "age_at_date", "date_offset", "date_diff"}:
+                if current_calc in {"lookup", "age_from_date", "age_at_date", "date_offset", "date_diff", "date_part"}:
                     question.calculationLookupField = value
             elif key == "unit":
                 if current_calc == "date_diff":
                     question.calculationUnit = value
+                elif current_calc == "date_part":
+                    normalized = value.strip().lower()
+                    allowed = {"yyyy", "yy", "mm", "dd", "doy"}
+                    if normalized in allowed:
+                        question.calculationUnit = normalized
+                    else:
+                        self._error(
+                            f"ERROR - Calculation: Invalid date_part unit '{value}' for FieldName '{fieldname}' in worksheet '{worksheet}'. "
+                            "Must be 'yyyy', 'yy', 'mm', 'dd', or 'doy'."
+                        )
             elif key == "operator":
                 if current_calc == "math":
                     if value in {"+", "-", "*", "/"}:
@@ -1275,4 +1286,18 @@ class ExcelReader:
                 self._error(
                     f"ERROR - Calculation: DateDiff calculation for FieldName '{fieldname}' in worksheet '{worksheet}' "
                     f"has invalid 'unit': {question.calculationUnit}. Must be 'd', 'w', 'm', or 'y'."
+                )
+        elif ctype == CalculationType.DATE_PART:
+            # An invalid unit value is already rejected where it's read (the
+            # "unit" key handler above), the same way an invalid math
+            # operator is -- this only catches the key being absent entirely.
+            if not question.calculationLookupField:
+                self._error(
+                    f"ERROR - Calculation: DatePart calculation for FieldName '{fieldname}' in worksheet '{worksheet}' "
+                    "is missing required 'field' field."
+                )
+            if not question.calculationUnit:
+                self._error(
+                    f"ERROR - Calculation: DatePart calculation for FieldName '{fieldname}' in worksheet '{worksheet}' "
+                    "is missing required 'unit' field."
                 )

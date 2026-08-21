@@ -96,16 +96,19 @@ class AutomaticNeedsCalculationTests(unittest.TestCase):
 
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
 
-    def test_yy_and_ddd_are_exempt_regardless_of_idconfig(self):
-        # The bug this guards against: yy/ddd are exempt via
+    def test_computed_automatic_variables_are_exempt_regardless_of_idconfig(self):
+        # The bug this guards against: yyyy/yy/mm/dd/doy are exempt via
         # KNOWN_AUTOMATIC_FIELDS, not via `supplied` (idconfig.fields) --
         # they must not error on a worksheet whose table has no idconfig at
         # all, e.g. a repeating child form linked by its parent's key rather
         # than ID-generated. No `supplied` set is passed here on purpose.
         reader = read(
             [
+                row("yyyy", "automatic", "text"),
                 row("yy", "automatic", "text"),
-                row("ddd", "automatic", "text"),
+                row("mm", "automatic", "text"),
+                row("dd", "automatic", "text"),
+                row("doy", "automatic", "text"),
             ]
         )
 

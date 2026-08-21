@@ -47,16 +47,25 @@ RESERVED_SYSTEM_FIELDS: frozenset[str] = (
 # Unlike RESERVED_SYSTEM_FIELDS, these are NOT auto-injected -- a dictionary
 # still has to declare a row for one, since the app has to compute it at a
 # form-specific position (immediately before whichever field's idconfig
-# reads it), which is neither of the two fixed slots above. What they share
-# with the reserved set is that the app already knows how to compute them by
-# name (see AutoFields._registry in the app repo), on ANY form, regardless of
-# whether that form's own idconfig references them -- yy/ddd are stamped on a
-# repeating child form just as validly as on the base form whose idconfig
-# actually consumes them, e.g. to protect that child form's own generated key
-# the same way, or simply because the study wants the date visible on every
-# table. So a declared row for one of these needs no `calc:` block on ANY
-# worksheet, not only the one table happens to name it in idconfig.fields.
-KNOWN_AUTOMATIC_FIELDS: frozenset[str] = frozenset({"yy", "ddd"})
+# reads it, if that's why it's there), which is neither of the two fixed
+# slots above. What they share with the reserved set is that the app already
+# knows how to compute them by name (see AutoFields._registry in the app
+# repo), on ANY form, regardless of whether that form's own idconfig
+# references them -- these are stamped on a repeating child form just as
+# validly as on a base form whose idconfig consumes them to protect its own
+# generated key, or simply because a study wants a date component visible on
+# some table for its own sake. So a declared row for one of these needs no
+# `calc:` block on ANY worksheet, not only a table that happens to name it in
+# idconfig.fields.
+#
+# Note the distinction from the `date_part` calculation type (see
+# CalculationType.DATE_PART / excel_reader.py): these five always mean
+# "today," computed once and never recomputed -- that's what makes yy/doy
+# safe to fold into an idconfig-generated ID. `calc:date_part` extracts the
+# same components from an arbitrary *other* date field instead, and
+# recomputes whenever that field does, unless the author opts into
+# `preserve: true` on the calculation itself.
+KNOWN_AUTOMATIC_FIELDS: frozenset[str] = frozenset({"yyyy", "yy", "mm", "dd", "doy"})
 
 
 class ResponseSourceType(str, Enum):
@@ -77,6 +86,7 @@ class CalculationType(str, Enum):
     AGE_AT_DATE = "AgeAtDate"
     DATE_OFFSET = "DateOffset"
     DATE_DIFF = "DateDiff"
+    DATE_PART = "DatePart"
 
 
 @dataclass
