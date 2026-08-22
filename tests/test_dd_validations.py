@@ -392,6 +392,56 @@ class SkipToReservedFieldTests(unittest.TestCase):
         self.assertIn("nonexistent FieldName", "\n".join(errors(reader)))
 
 
+class SkipToEndOfFormTests(unittest.TestCase):
+    """`skip to end` is the app's own end-of-form sentinel, not a fieldname --
+    see SurveyNavigationService.endOfFormSkipTarget in the app repo."""
+
+    def test_skipping_to_end_is_accepted(self):
+        reader = read(
+            [
+                row("consent", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if consent = 0, skip to end"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_end_is_case_insensitive(self):
+        reader = read(
+            [
+                row("consent", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if consent = 0, skip to END"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_field_named_end_is_rejected(self):
+        reader = read(
+            [
+                row("end", "text", "text"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("reserved", "\n".join(errors(reader)))
+
+    def test_a_genuinely_missing_target_still_errors(self):
+        # 'end' must not become a loophole that silently accepts any target.
+        reader = read(
+            [
+                row("consent", "radio", "integer", responses="1:Yes\n0:No",
+                    skip="postskip: if consent = 0, skip to endzone"),
+                row("netshape", "radio", "integer", responses="1:Round\n2:Square"),
+            ]
+        )
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("nonexistent FieldName", "\n".join(errors(reader)))
+
+
 class SkipTestingAReservedFieldTests(unittest.TestCase):
     """Which questions get asked must not depend on a generator-supplied value."""
 

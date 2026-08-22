@@ -1057,7 +1057,7 @@ preskip: if_condition, skip_to_target
 **Examples:**
 ```
 preskip: if has_children = 0, skip to occupation
-preskip: if age < 18, skip to comments
+preskip: if eligible = 0, skip to end
 ```
 
 **How it works:**
@@ -1090,7 +1090,7 @@ You can have multiple skip conditions (one per line):
 
 **Example:**
 ```
-preskip: if age < 18, skip to commetns
+preskip: if age < 18, skip to end
 postskip: if consent = =1, skip to age
 ```
 
@@ -1123,6 +1123,20 @@ If the `symptoms` checkbox question has values stored as `"1,2,3"` (user selecte
 - The target field to skip to must exist and appear **after** the current question
 - Cannot skip to the same question
 - For checkbox questions, values are stored as comma-separated strings (e.g., "1,2,3")
+
+#### Skipping to the end of the questionnaire
+
+`skip to end` is a reserved target, not a FieldName -- use it to end the interview early once a
+screening question rules the respondent out, without needing a real question to land on:
+
+```
+postskip: if eligible = 0, skip to end
+```
+
+Unlike an ordinary skip, `end` doesn't jump past the remaining questions -- it walks through them,
+computing any calculated fields and the reserved trailing variables (`uniqueid`, `swver`,
+`survey_id`, `lastmod`, `stoptime`) exactly as if navigation had reached them normally, so the
+record is saved complete. Because `end` is reserved for this, it cannot be used as a FieldName.
 
 ---
 

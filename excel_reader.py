@@ -328,6 +328,18 @@ class ExcelReader:
             self._error(f"ERROR - FieldName: {worksheet} has a FieldName that starts with an underscore: {fieldname}")
         elif " " in fieldname:
             self._error(f"ERROR - FieldName: {worksheet} has a FieldName that contains a space: {fieldname}")
+        elif fieldname.lower() == "end":
+            # Reserved as the Skip target sentinel meaning "end of form" (see
+            # `_check_skip_to_field_names`). Not part of RESERVED_SYSTEM_FIELDS
+            # -- that set is used elsewhere to silently drop a declared row
+            # for the name, which is wrong here: a row named 'end' should be
+            # rejected outright, not dropped, since the app would then be
+            # unable to skip to it by name (it never gets that far -- the
+            # sentinel is checked before any fieldname lookup).
+            self._error(
+                f"ERROR - FieldName: {worksheet} uses 'end', which is reserved as the "
+                "Skip target meaning 'end of form'. Choose a different FieldName."
+            )
 
     def _check_max_chars_value(self, worksheet: str, max_chars: str, fieldname: str) -> None:
         numeric = max_chars[1:] if max_chars.startswith("=") else max_chars
@@ -700,7 +712,13 @@ class ExcelReader:
                         f"checks skip of a nonexistent FieldName: {fieldname_to_check}"
                     )
 
-                if fieldname_to_skip_to.lower() in RESERVED_SYSTEM_FIELDS:
+                if fieldname_to_skip_to.lower() == "end":
+                    # The app's own end-of-form sentinel (see
+                    # SurveyNavigationService.endOfFormSkipTarget in the app
+                    # repo) -- not a fieldname, so none of the checks below
+                    # apply to it.
+                    pass
+                elif fieldname_to_skip_to.lower() in RESERVED_SYSTEM_FIELDS:
                     self._error(
                         f"ERROR - Skip: In worksheet '{worksheet}', the skip for FieldName '{cur_field}' "
                         f"skips to the reserved variable '{fieldname_to_skip_to}'. The generator places "
