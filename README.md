@@ -25,7 +25,7 @@ A tool for generating XML configuration files and survey manifests from Excel-ba
     - [LogicCheck](#logiccheck)
     - [DontKnow](#dontknow)
     - [Refuse](#refuse)
-    - [NA](#na)
+    - [Optional](#optional)
     - [Skip](#skip)
     - [Comments](#comments)
   - [The CRFS Worksheet](#the-crfs-worksheet)
@@ -262,7 +262,7 @@ Each questionnaire worksheet (`_dd` worksheets) must have exactly 14 columns wit
 | 9 | LogicCheck |
 | 10 | DontKnow |
 | 11 | Refuse |
-| 12 | NA |
+| 12 | Optional |
 | 13 | Skip |
 | 14 | Comments |
 
@@ -270,6 +270,9 @@ Each questionnaire worksheet (`_dd` worksheets) must have exactly 14 columns wit
 - The first row of each worksheet must contain these exact column headers
 - Rows that are merged will be ignored (useful for section headers or notes)
 - Each non-merged row after the header represents one question/field
+- Column 12 was named `NA` before the Optional column existed -- a worksheet with `NA` there
+  instead of `Optional` is still accepted, but that column's contents are ignored entirely. See
+  the [Optional](#optional) section below.
 
 ---
 
@@ -1004,8 +1007,8 @@ unique; 'This ID has already been used'
 Adds a "Don't Know" response option to the question.
 
 **Valid Values:**
-- `True` - Show the "Don't Know" response
-- `False` - Don't show the response
+- `True` / `TRUE` - Show the "Don't Know" response
+- `False` / `FALSE` - Don't show the response
 - Leave blank if not needed
 
 **Example:**
@@ -1018,8 +1021,8 @@ When set to `True`, a "Don't Know" response appears that allows the user to skip
 Adds a "Refuse to Answer" response option to the question.
 
 **Valid Values:**
-- `True` - Show the "Refuse to Answer" response
-- `False` - Don't show the response
+- `True` / `TRUE` - Show the "Refuse to Answer" response
+- `False` / `FALSE` - Don't show the response
 - Leave blank if not needed
 
 **Example:**
@@ -1027,17 +1030,31 @@ When set to `True`, a "Refuse to Answer" response appears for sensitive question
 
 ---
 
-### NA
+### Optional
 
-Adds a "Not Applicable" response option to the question.
+Marks a **text** question as skippable: the user can press Next with the field left blank.
+Replaces the old NA column, which added a "Not Applicable" response option that the app never
+actually read -- it had no effect on any survey.
 
 **Valid Values:**
-- `True` - Show the "Not Applicable" response
-- `False` - Don't show the response
-- Leave blank if not needed
+- `True` / `TRUE` - The question may be left blank
+- `False` / `FALSE`, or blank - The question must be answered (the default)
+- Only meaningful for `QuestionType = text`. Choice questions (`radio`/`checkbox`/`combobox`)
+  already have DontKnow/Refuse above for an explicit non-answer.
 
 **Example:**
-When set to `True`, a "N/A" response appears when the question may not apply to all respondents.
+```
+FieldName: notes | QuestionType: text | FieldType: text | Optional: TRUE
+```
+
+**Note on `comments`:** a field named `comments` used to be always-optional automatically,
+regardless of this column. That is no longer true -- if your dictionary has a `comments` field
+that should stay skippable, set `Optional` to `TRUE` on it explicitly. The generator warns (but
+does not error) if it finds a `comments` field without Optional set.
+
+**Backward compatibility:** a dictionary written before this column existed still has `NA` as
+the header there instead of `Optional`. That is still accepted -- the column's contents are
+simply ignored, exactly as before.
 
 ---
 
@@ -1711,49 +1728,49 @@ step with another.
 
 ### Example 1: Simple Radio Button Question
 
-| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | NA | Skip | Comments |
+| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | Optional | Skip | Comments |
 |-----------|-------------|-----------|--------------|---------------|-----------|------------|------------|------------|----------|--------|----|----|----------|
 | gender | radio | integer | What is your gender? | | 1:Male<br>2:Female | | | | False | False | False | | |
 
 ### Example 2: Text Field with Validation
 
-| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | NA | Skip | Comments |
+| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | Optional | Skip | Comments |
 |-----------|-------------|-----------|--------------|---------------|-----------|------------|------------|------------|----------|--------|----|----|----------|
 | age | text | text_integer | What is your age? | 3 | | 0 | 120 | | False | False | False | | Valid ages 0-120 |
 
 ### Example 3: Date Field with Range
 
-| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | NA | Skip | Comments |
+| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | Optional | Skip | Comments |
 |-----------|-------------|-----------|--------------|---------------|-----------|------------|------------|------------|----------|--------|----|----|----------|
 | birth_date | date | date | What is your date of birth? | | | -100y | 0 | | False | False | False | | |
 
 ### Example 4: Checkbox Question
 
-| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | NA | Skip | Comments |
+| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | Optional | Skip | Comments |
 |-----------|-------------|-----------|--------------|---------------|-----------|------------|------------|------------|----------|--------|----|----|----------|
 | symptoms | checkbox | text | What symptoms do you have? | | A:Fever<br>B:Cough<br>C:Headache<br>D:Fatigue | | | | False | False | False | | Multiple selection |
 
 ### Example 5: Dynamic Responses from CSV
 
-| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | NA | Skip | Comments |
+| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | Optional | Skip | Comments |
 |-----------|-------------|-----------|--------------|---------------|-----------|------------|------------|------------|----------|--------|----|----|----------|
 | village | combobox | text | Select your village | | source:csv<br>file:villages.csv<br>filter:region = [[region]]<br>display:villagename<br>value:vcode | | | | False | False | False | | Cascading dropdown |
 
 ### Example 6: Logic Check
 
-| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | NA | Skip | Comments |
+| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | Optional | Skip | Comments |
 |-----------|-------------|-----------|--------------|---------------|-----------|------------|------------|------------|----------|--------|----|----|----------|
 | confirm_age | text | text_integer | Please confirm your age | 3 | | 0 | 120 | confirm_age = age; 'Age does not match!' | False | False | False | | Verification field |
 
 ### Example 7: Skip Logic
 
-| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | NA | Skip | Comments |
+| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | Optional | Skip | Comments |
 |-----------|-------------|-----------|--------------|---------------|-----------|------------|------------|------------|----------|--------|----|----|----------|
 | pregnant | radio | integer | Are you pregnant? | | 1:Yes<br>2:No | | | | False | False | False | postskip: pregnant = 2, if, next_section | Skip if not pregnant |
 
 ### Example 8: Unique Check
 
-| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | NA | Skip | Comments |
+| FieldName | QuestionType | FieldType | QuestionText | MaxCharacters | Responses | LowerRange | UpperRange | LogicCheck | DontKnow | Refuse | Optional | Skip | Comments |
 |-----------|-------------|-----------|--------------|---------------|-----------|------------|------------|------------|----------|--------|----|----|----------|
 | participant_id | text | text | Enter participant ID | 20 | | | | unique; 'This ID has already been used in the database!' | False | False | False | | Must be unique |
 

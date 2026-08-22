@@ -153,8 +153,8 @@ class XmlGenerator:
                     wl("\t\t<dont_know>-7</dont_know>")
                 if q.refuse in {"TRUE", "True"}:
                     wl("\t\t<refuse>-8</refuse>")
-                if q.na in {"TRUE", "True"}:
-                    wl("\t\t<na>-6</na>")
+                if q.optional in {"TRUE", "True"}:
+                    wl("\t\t<optional>1</optional>")
 
                 wl("\t</question>")
                 f.write(BLANK_LINE)

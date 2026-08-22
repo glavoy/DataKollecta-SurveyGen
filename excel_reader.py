@@ -33,10 +33,15 @@ class ExcelReader:
         "LogicCheck",
         "DontKnow",
         "Refuse",
-        "NA",
+        "Optional",
         "Skip",
         "Comments",
     ]
+    # Index of the Optional/NA column within COLUMN_NAMES -- a dictionary
+    # written before this column was repurposed still has "NA" there, and is
+    # still accepted: see the header check in create_question_list.
+    OPTIONAL_COLUMN_INDEX = 11
+    LEGACY_NA_COLUMN_NAME = "NA"
 
     NUMERIC_ONLY_RE = re.compile(r"^\d+$")
     DECIMAL_RE = re.compile(r"^\d+(\.\d+)?$")
@@ -113,23 +118,35 @@ class ExcelReader:
         # field, primary key, idconfig parts). They legitimately have no
         # calculation, so they are exempt from the calculation check.
         self.suppliedAutoFields = {f.lower() for f in (supplied_auto_fields or set())}
+        # Set from the header row: True once column 12 reads "NA" (an
+        # old-style dictionary, written before the column was repurposed).
+        # Its contents are then ignored entirely rather than parsed as the
+        # Optional flag -- an old sheet's NA cells were never meant to make
+        # anything optional, so a stray value there must not start doing so.
+        self.optionalColumnIsLegacyNa = False
 
     def create_question_list(self, worksheet: Worksheet) -> list[Question]:
         self.worksheetErrorsEncountered = False
         self.logstring.append(f"\rChecking worksheet: '{worksheet.title}'")
         self.questionList = []
         self.reservedFieldsWithCalculation = set()
+        self.optionalColumnIsLegacyNa = False
 
         for row_idx in range(1, worksheet.max_row + 1):
             try:
                 if row_idx == 1:
                     current_headers = [self._get_cell_trim(worksheet, 1, i + 1) for i in range(self.NUMBER_OF_COLUMNS)]
-                    if current_headers != self.COLUMN_NAMES:
+                    expected_legacy = list(self.COLUMN_NAMES)
+                    expected_legacy[self.OPTIONAL_COLUMN_INDEX] = self.LEGACY_NA_COLUMN_NAME
+                    if current_headers == expected_legacy:
+                        self.optionalColumnIsLegacyNa = True
+                    elif current_headers != self.COLUMN_NAMES:
                         self._error(
                             "ERROR: The header names in the "
                             f"{worksheet.title} are incorrect. Header names should be: "
                             "FieldName, QuestionType, FieldType, QuestionText, MaxCharacters, "
-                            "Responses, LowerRange, UpperRange, LogicCheck, DontKnow, Refuse, NA, Skip, Comments"
+                            "Responses, LowerRange, UpperRange, LogicCheck, DontKnow, Refuse, Optional, Skip, Comments "
+                            "(a dictionary written before the Optional column was added may still say 'NA' there instead)"
                         )
                     continue
 
@@ -239,9 +256,21 @@ class ExcelReader:
                 if q.refuse != "-9":
                     self._check_special_button(worksheet.title, q.refuse, q.fieldName, "Refuse")
 
-                q.na = self._get_cell_trim(worksheet, row_idx, 12) or "-9"
-                if q.na != "-9":
-                    self._check_special_button(worksheet.title, q.na, q.fieldName, "NA")
+                if self.optionalColumnIsLegacyNa:
+                    # Legacy dictionary: this column is still labelled "NA".
+                    # Its contents are never parsed as Optional -- see the
+                    # comment on optionalColumnIsLegacyNa in __init__.
+                    q.optional = "-9"
+                else:
+                    q.optional = self._get_cell_trim(worksheet, row_idx, 12) or "-9"
+                    if q.optional != "-9":
+                        self._check_special_button(worksheet.title, q.optional, q.fieldName, "Optional")
+                        if q.questionType != "text":
+                            self._error(
+                                f"ERROR - Optional: FieldName '{q.fieldName}' in worksheet '{worksheet.title}' "
+                                "sets Optional, but Optional is only meaningful for a 'text' QuestionType "
+                                f"(this question is '{q.questionType}')."
+                            )
 
                 q.skip = self._get_cell_trim(worksheet, row_idx, 13)
                 if q.skip:
@@ -267,6 +296,7 @@ class ExcelReader:
             self._check_preskip_does_not_test_itself(worksheet.title)
             self._check_max_characters_is_meaningful(worksheet.title)
             self._check_reserved_automatic_fields(worksheet.title)
+            self._check_comments_field_is_optional(worksheet.title)
             if not self.worksheetErrorsEncountered:
                 self.logstring.append(f"No errors found in '{worksheet.title}'")
 
@@ -502,7 +532,11 @@ class ExcelReader:
             )
 
     def _check_special_button(self, worksheet: str, value: str, fieldname: str, button_name: str) -> None:
-        if value not in {"True", "False"}:
+        # Matches what the generator itself accepts as truthy
+        # ({"TRUE", "True"} -- see xml_generator.py); this used to require
+        # exactly "True"/"False" and reject "TRUE", which the generator
+        # would otherwise have treated as set.
+        if value not in {"True", "TRUE", "False", "FALSE"}:
             self._error(
                 f"ERROR: - {button_name} FieldName '{fieldname}' in worksheet '{worksheet}' "
                 f"has an invalid value for '{button_name}': {value}"
@@ -631,6 +665,24 @@ class ExcelReader:
             add("a response filter", cls.PLACEHOLDER_RE.findall(response_filter.value))
         add("its question text", cls.PLACEHOLDER_RE.findall(question.questionText))
         return refs
+
+    def _check_comments_field_is_optional(self, worksheet: str) -> None:
+        """A field named 'comments' used to be hardcoded as always-optional in
+        the app. That hardcode is gone -- Optional is now what makes a text
+        field skippable, and 'comments' is not special anymore. This is a
+        warning, not an auto-tick: silently setting it back would reintroduce
+        the exact magic this column exists to remove.
+        """
+        for question in self.questionList:
+            if question.fieldName.lower() != "comments":
+                continue
+            if question.questionType != "text" or question.optional in {"", "-9"}:
+                self.logstring.append(
+                    f"WARNING - Optional: In worksheet '{worksheet}', FieldName 'comments' does not "
+                    "have Optional set to TRUE. A field named 'comments' used to be always-optional "
+                    "automatically; it no longer is, so this interview cannot be finished without "
+                    "answering it unless Optional is set."
+                )
 
     def _check_message_placeholders(self, worksheet: str) -> None:
         """A validation message is shown exactly as it was written.

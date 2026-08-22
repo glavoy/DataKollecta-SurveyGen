@@ -17,16 +17,20 @@ HEADERS = [
     "LogicCheck",
     "DontKnow",
     "Refuse",
-    "NA",
+    "Optional",
     "Skip",
     "Comments",
 ]
 
+# A dictionary written before the Optional column was added still has "NA"
+# there -- still accepted, but its contents are ignored entirely.
+LEGACY_NA_HEADERS = [h if h != "Optional" else "NA" for h in HEADERS]
+
 
 def row(fieldname, qtype, ftype, text="Question text", maxchars="", responses="",
-        skip="", lower="", upper=""):
+        skip="", lower="", upper="", optional=""):
     return [fieldname, qtype, ftype, text, maxchars, responses, lower, upper,
-            "", "", "", "", skip, ""]
+            "", "", "", optional, skip, ""]
 
 
 def numeric_row(fieldname="age", ftype="text_integer", maxchars="3", **kwargs):
@@ -36,11 +40,11 @@ def numeric_row(fieldname="age", ftype="text_integer", maxchars="3", **kwargs):
     return row(fieldname, "text", ftype, maxchars=maxchars, **kwargs)
 
 
-def read(rows, supplied=None):
+def read(rows, supplied=None, headers=HEADERS):
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "demo_dd"
-    worksheet.append(HEADERS)
+    worksheet.append(headers)
     for r in rows:
         worksheet.append(r)
     reader = ExcelReader(supplied_auto_fields=supplied)
@@ -175,7 +179,7 @@ class AnswerableResponsesTests(unittest.TestCase):
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
 
     def test_a_text_question_needs_no_responses(self):
-        reader = read([row("comments", "text", "text", maxchars="80")])
+        reader = read([row("notes", "text", "text", maxchars="80")])
 
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
 
@@ -232,7 +236,7 @@ class MaxCharactersWarningTests(unittest.TestCase):
         self.assertIn("MaxCharacters is ignored", warnings(reader)[0])
 
     def test_max_characters_on_a_text_question_is_silent(self):
-        reader = read([row("comments", "text", "text", maxchars="80")])
+        reader = read([row("notes", "text", "text", maxchars="80")])
 
         self.assertEqual(warnings(reader), [])
 
@@ -390,6 +394,75 @@ class SkipToReservedFieldTests(unittest.TestCase):
 
         self.assertTrue(reader.errorsEncountered)
         self.assertIn("nonexistent FieldName", "\n".join(errors(reader)))
+
+
+class OptionalColumnTests(unittest.TestCase):
+    """Optional replaces the old NA column: a text question with Optional set
+    to TRUE may be left blank -- the Next button stays enabled even with no
+    answer. Restricted to QuestionType 'text'; choice questions already have
+    DontKnow/Refuse for an explicit non-answer."""
+
+    def test_optional_true_on_a_text_question_is_accepted(self):
+        reader = read([row("notes", "text", "text", maxchars="80", optional="True")])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_all_caps_true_is_also_accepted(self):
+        # The generator itself already treats 'TRUE' as set
+        # (xml_generator.py checks {"TRUE", "True"}); the validator used to
+        # reject it, which was an inconsistency, not a real rule.
+        reader = read([row("notes", "text", "text", maxchars="80", optional="TRUE")])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_an_unset_optional_column_is_silent(self):
+        reader = read([row("notes", "text", "text", maxchars="80")])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_an_invalid_value_is_an_error(self):
+        reader = read([row("notes", "text", "text", maxchars="80", optional="yes")])
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("Optional", "\n".join(errors(reader)))
+
+    def test_optional_on_a_non_text_question_is_an_error(self):
+        reader = read(
+            [row("consent", "radio", "integer", responses="1:Yes\n0:No", optional="True")]
+        )
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn("Optional", message)
+        self.assertIn("text", message)
+
+    def test_a_comments_field_without_optional_warns(self):
+        reader = read([row("comments", "text", "text", maxchars="80")])
+        self.assertFalse(reader.errorsEncountered)
+        self.assertIn("comments", "\n".join(warnings(reader)))
+
+    def test_a_comments_field_with_optional_does_not_warn(self):
+        reader = read([row("comments", "text", "text", maxchars="80", optional="True")])
+        self.assertEqual(warnings(reader), [])
+
+    def test_an_unrelated_field_without_optional_does_not_warn(self):
+        reader = read([row("notes", "text", "text", maxchars="80")])
+        self.assertEqual(warnings(reader), [])
+
+    def test_a_legacy_na_header_is_still_accepted(self):
+        reader = read([row("notes", "text", "text", maxchars="80")], headers=LEGACY_NA_HEADERS)
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_legacy_na_columns_contents_are_ignored_entirely(self):
+        # Whatever an old sheet has in the NA cell -- valid, garbage, or a
+        # value that would have set Optional -- must never be parsed. A
+        # stray value there was never meant to make anything optional.
+        reader = read(
+            [row("notes", "text", "text", maxchars="80", optional="garbage")],
+            headers=LEGACY_NA_HEADERS,
+        )
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_header_that_is_neither_na_nor_optional_is_rejected(self):
+        bad_headers = [h if h != "Optional" else "Something Else" for h in HEADERS]
+        reader = read([row("notes", "text", "text", maxchars="80")], headers=bad_headers)
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("header", "\n".join(errors(reader)).lower())
 
 
 class SkipToEndOfFormTests(unittest.TestCase):

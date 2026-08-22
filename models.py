@@ -163,7 +163,7 @@ class Question:
     uniqueCheckMessage: str = ""
     dontKnow: str = ""
     refuse: str = ""
-    na: str = ""
+    optional: str = ""
     skip: str = ""
     mask: str = ""
 

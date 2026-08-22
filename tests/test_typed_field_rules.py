@@ -15,7 +15,7 @@ class TypedFieldTypeTests(unittest.TestCase):
     def test_the_four_typed_field_types_are_accepted(self):
         reader = read(
             [
-                row("comments", "text", "text", maxchars="80"),
+                row("notes", "text", "text", maxchars="80"),
                 numeric_row("age", "text_integer"),
                 numeric_row("weight", "text_decimal", maxchars="5"),
                 row("timeseen", "text", "hourmin", maxchars="=5"),
@@ -136,7 +136,7 @@ class MissingRangeWarningTests(unittest.TestCase):
         self.assertEqual(len(warnings(reader)), 1)
 
     def test_a_plain_text_field_is_never_asked_for_a_range(self):
-        reader = read([row("comments", "text", "text", maxchars="80")])
+        reader = read([row("notes", "text", "text", maxchars="80")])
 
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
         self.assertEqual(warnings(reader), [])
