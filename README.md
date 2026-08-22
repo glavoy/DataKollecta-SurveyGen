@@ -1529,7 +1529,7 @@ parent form. For one-off sister forms, leave them blank.
 | `0` | **Flexible.** Any number of children allowed; no check. |
 | `1` | **Warn** *(default if blank)*. On mismatch, warn and offer to update the parent's count to the actual number entered. |
 | `2` | **Force.** Block exit until exactly the stated number of children are entered. There is **no** "Exit Anyway" escape in this mode. |
-| `3` | **Auto-sync.** Silently update the parent's count field to match the number actually entered. |
+| `3` | **Auto-sync.** Update the parent's count field to match the number actually entered, with no choice offered -- then show a single acknowledgement dialog telling the interviewer the count was changed and to what. Unlike mode `1`, there is no "Exit Anyway" to leave the mismatch unresolved. |
 
 **Typical repeating setup:** `repeat_count_field=nmembers`, `auto_start_repeat=2`,
 `repeat_enforce_count=2`.
