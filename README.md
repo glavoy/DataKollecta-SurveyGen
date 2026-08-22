@@ -1531,6 +1531,12 @@ parent form. For one-off sister forms, leave them blank.
 | `2` | **Force.** Block exit until exactly the stated number of children are entered. There is **no** "Exit Anyway" escape in this mode. |
 | `3` | **Auto-sync.** Update the parent's count field to match the number actually entered, with no choice offered -- then show a single acknowledgement dialog telling the interviewer the count was changed and to what. Unlike mode `1`, there is no "Exit Anyway" to leave the mismatch unresolved. |
 
+**Stopping the loop early, in modes `1` and `3`.** The child form's own Cancel/X dialog
+already tells the interviewer the consequence before they confirm: "You've entered X of Y
+&lt;records&gt;. If you stop now, ..." followed by mode `1`'s "you'll be asked whether to update
+the count" or mode `3`'s "the count will be automatically updated to X." Mode `2` never shows
+this, since the loop blocks completion instead.
+
 **Typical repeating setup:** `repeat_count_field=nmembers`, `auto_start_repeat=2`,
 `repeat_enforce_count=2`.
 
