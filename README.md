@@ -16,6 +16,7 @@ A tool for generating XML configuration files and survey manifests from Excel-ba
     - [QuestionType](#questiontype)
     - [Reserved Automatic Variables](#reserved-automatic-variables)
     - [Computed Automatic Variables (yyyy, yy, mm, dd, doy)](#computed-automatic-variables-yyyy-yy-mm-dd-doy)
+    - [Custom Timestamp Fields](#custom-timestamp-fields)
     - [FieldType](#fieldtype)
     - [QuestionText](#questiontext)
     - [MaxCharacters](#maxcharacters)
@@ -427,6 +428,43 @@ version in [§7](#7-idconfig-reference-id-generation)):
 | FieldName | QuestionType | FieldType | Responses | Purpose |
 |-----------|--------------|-----------|-----------|---------|
 | `enroll_year` | `automatic` | `text` | `calc:date_part`<br>`field:enroll_date`<br>`unit:yyyy` | Extracts the year from the survey's own `enroll_date` field. If `enroll_date` is later corrected, `enroll_year` recomputes to match — it tracks its source rather than freezing, the opposite of the `doy` example above. |
+
+---
+
+### Custom Timestamp Fields
+
+`starttime` and `stoptime` aren't special magic — they're `automatic` questions with a
+`datetime` `FieldType`, and the app stamps the current date-and-time into any question that
+shape the moment its row is reached. What makes `starttime`/`stoptime` different is only that
+their *FieldNames* are reserved, so the generator auto-injects them at two fixed positions
+(see [Reserved Automatic Variables](#reserved-automatic-variables) above). Give an ordinary,
+non-reserved FieldName the same `automatic` + `datetime` shape and you get a real timestamp at
+**whatever point in the questionnaire you place the row** — no reserved position, no `calc:`
+block, no offset math from `starttime` needed.
+
+| FieldName | QuestionType | FieldType | Responses | Purpose |
+|-----------|--------------|-----------|-----------|---------|
+| `section3_time` | `automatic` | `datetime` | *(blank)* | Stamped with the date and time the moment the interview reaches this row — wherever you place it. |
+
+**Position decides what it records** — put the row immediately after whatever section you want
+timed, the same way `starttime`'s fixed position (before the first question) is what makes it
+mean "when the interview started" rather than anything else. Add as many of these as you like
+at different points in one questionnaire, each with its own FieldName.
+
+**Frozen on first reach, same as `starttime`.** Once stamped, the value is never recomputed —
+not on a later edit, not if the interviewer navigates back past it and forward again. If you
+instead want a value that tracks another date field and recomputes when that field changes, use
+the `date_part` calculation type ([Automatic Calculations](#automatic-calculations) below)
+instead — that's the same distinction drawn for `yyyy`/`yy`/`mm`/`dd`/`doy` above.
+
+**`FieldType` must be `datetime`, not `date` or `text`.** `date` records only the date with no
+time; anything else records a placeholder, not a timestamp, because there is no calculation and
+no reserved meaning attached to the FieldName for the app to fall back on.
+
+**Why not a `date_offset` calculation from `starttime`?** `date_offset` computes a *guess*
+forward or backward from another date, in whole days/weeks/months/years — it has no
+hours/minutes granularity and isn't a real observation. A custom `automatic`/`datetime` field
+records what actually happened, which is what a mid-interview timestamp is for.
 
 ---
 
