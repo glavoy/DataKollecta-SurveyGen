@@ -917,6 +917,15 @@ class ExcelReader:
         It stays null for every record, and — worse — any skip that tests it
         silently fails open, because a skip whose field is unanswered never
         fires. The question it was meant to guard is then asked of everyone.
+
+        The one other exemption, alongside the reserved/known/supplied
+        fields below: a `datetime` FieldType with no calc is a deliberate
+        custom timestamp, not an oversight -- the app stamps it with the
+        current date-and-time the moment its row is reached, the same
+        mechanism that gives starttime/stoptime their values, just without a
+        reserved FieldName or an injected position. See "Custom Timestamp
+        Fields" in README.md. `date`/`text`/etc. get no such runtime
+        fallback -- those still need a calc: block or they're a real bug.
         """
         for question in self.questionList:
             if question.questionType != "automatic":
@@ -926,6 +935,7 @@ class ExcelReader:
                 name in self.BUILT_IN_AUTO_FIELDS
                 or name in self.suppliedAutoFields
                 or name in KNOWN_AUTOMATIC_FIELDS
+                or question.fieldType.strip().lower() == "datetime"
             ):
                 continue
             if question.calculationType != CalculationType.NONE:

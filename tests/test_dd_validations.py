@@ -143,6 +143,25 @@ class AutomaticNeedsCalculationTests(unittest.TestCase):
         self.assertEqual(len(errors(reader)), 1)
         self.assertIn("'region'", errors(reader)[0])
 
+    def test_a_custom_datetime_field_is_exempt(self):
+        # A non-reserved, non-KNOWN_AUTOMATIC_FIELDS name with FieldType
+        # datetime is a deliberate mid-questionnaire timestamp -- the app
+        # stamps it with the current time when its row is reached, the same
+        # way starttime/stoptime work. See "Custom Timestamp Fields" in
+        # README.md.
+        reader = read([row("time_eligible", "automatic", "datetime")])
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_custom_non_datetime_field_is_still_reported(self):
+        # Only `datetime` gets the "app stamps it automatically" exemption --
+        # `date`/`text`/etc. have no such runtime fallback, so a blank
+        # Responses column there is still a real bug.
+        reader = read([row("region", "automatic", "date")])
+
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("has no calculation (the Responses column is blank)", errors(reader)[0])
+
 
 class AnswerableResponsesTests(unittest.TestCase):
     """A selection question with no options cannot be answered."""
