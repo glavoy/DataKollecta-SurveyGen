@@ -918,14 +918,10 @@ class ExcelReader:
         silently fails open, because a skip whose field is unanswered never
         fires. The question it was meant to guard is then asked of everyone.
 
-        The one other exemption, alongside the reserved/known/supplied
-        fields below: a `datetime` FieldType with no calc is a deliberate
-        custom timestamp, not an oversight -- the app stamps it with the
-        current date-and-time the moment its row is reached, the same
-        mechanism that gives starttime/stoptime their values, just without a
-        reserved FieldName or an injected position. See "Custom Timestamp
-        Fields" in README.md. `date`/`text`/etc. get no such runtime
-        fallback -- those still need a calc: block or they're a real bug.
+        There is no FieldType-based exemption: a mid-questionnaire timestamp
+        (previously a blank-Responses `datetime` field left to an implicit
+        runtime fallback) must now use `calc:timestamp` explicitly. See
+        "Custom Timestamp Fields" in README.md.
         """
         for question in self.questionList:
             if question.questionType != "automatic":
@@ -935,7 +931,6 @@ class ExcelReader:
                 name in self.BUILT_IN_AUTO_FIELDS
                 or name in self.suppliedAutoFields
                 or name in KNOWN_AUTOMATIC_FIELDS
-                or question.fieldType.strip().lower() == "datetime"
             ):
                 continue
             if question.calculationType != CalculationType.NONE:
@@ -1141,13 +1136,14 @@ class ExcelReader:
                     "date_offset": CalculationType.DATE_OFFSET,
                     "date_diff": CalculationType.DATE_DIFF,
                     "date_part": CalculationType.DATE_PART,
+                    "timestamp": CalculationType.TIMESTAMP,
                 }
                 if current_calc in mapping:
                     question.calculationType = mapping[current_calc]
                 else:
                     self._error(
                         f"ERROR - Calculation: Invalid calculation type '{value}' for FieldName '{fieldname}' in worksheet '{worksheet}'. "
-                        "Must be 'query', 'case', 'constant', 'lookup', 'math', 'concat', 'age_from_date', 'age_at_date', 'date_offset', 'date_diff', or 'date_part'."
+                        "Must be 'query', 'case', 'constant', 'lookup', 'math', 'concat', 'age_from_date', 'age_at_date', 'date_offset', 'date_diff', 'date_part', or 'timestamp'."
                     )
             elif key == "sql":
                 question.calculationQuerySql = value
@@ -1380,4 +1376,10 @@ class ExcelReader:
                 self._error(
                     f"ERROR - Calculation: DatePart calculation for FieldName '{fieldname}' in worksheet '{worksheet}' "
                     "is missing required 'unit' field."
+                )
+        elif ctype == CalculationType.TIMESTAMP:
+            if question.fieldType.strip().lower() != "datetime":
+                self._error(
+                    f"ERROR - Calculation: Timestamp calculation for FieldName '{fieldname}' in worksheet '{worksheet}' "
+                    f"requires FieldType 'datetime', got '{question.fieldType}'."
                 )

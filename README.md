@@ -438,28 +438,36 @@ version in [§7](#7-idconfig-reference-id-generation)):
 shape the moment its row is reached. What makes `starttime`/`stoptime` different is only that
 their *FieldNames* are reserved, so the generator auto-injects them at two fixed positions
 (see [Reserved Automatic Variables](#reserved-automatic-variables) above). Give an ordinary,
-non-reserved FieldName the same `automatic` + `datetime` shape and you get a real timestamp at
-**whatever point in the questionnaire you place the row** — no reserved position, no `calc:`
-block, no offset math from `starttime` needed.
+non-reserved FieldName the same `automatic` + `datetime` shape, with a `calc:timestamp` block,
+and you get a real timestamp at **whatever point in the questionnaire you place the row** — no
+reserved position, no offset math from `starttime` needed.
 
 | FieldName | QuestionType | FieldType | Responses | Purpose |
 |-----------|--------------|-----------|-----------|---------|
-| `section3_time` | `automatic` | `datetime` | *(blank)* | Stamped with the date and time the moment the interview reaches this row — wherever you place it. |
+| `section3_time` | `automatic` | `datetime` | `calc:timestamp` | Stamped with the date and time the moment the interview reaches this row — wherever you place it. |
 
 **Position decides what it records** — put the row immediately after whatever section you want
 timed, the same way `starttime`'s fixed position (before the first question) is what makes it
 mean "when the interview started" rather than anything else. Add as many of these as you like
 at different points in one questionnaire, each with its own FieldName.
 
-**Frozen on first reach, same as `starttime`.** Once stamped, the value is never recomputed —
-not on a later edit, not if the interviewer navigates back past it and forward again. If you
-instead want a value that tracks another date field and recomputes when that field changes, use
-the `date_part` calculation type ([Automatic Calculations](#automatic-calculations) below)
-instead — that's the same distinction drawn for `yyyy`/`yy`/`mm`/`dd`/`doy` above.
+**Frozen once the record is saved and later reopened for editing** — `calc:timestamp` always
+generates with `preserve: true` (see [Timestamp](#12-timestamp) under Automatic Calculations),
+so editing an existing record does not restamp it to the edit time. Within a single, not-yet-saved
+interview, it *does* still recompute if the interviewer backs up past this row and comes forward
+again — like every other `calc:` type, and unlike `starttime`/`stoptime` themselves, which are
+reserved system fields rather than `calc:` fields and freeze on first reach unconditionally. If
+you instead want a value that tracks another date field and recomputes whenever that field
+changes, use the `date_part` calculation type ([Automatic Calculations](#automatic-calculations)
+below) — that's the same distinction drawn for `yyyy`/`yy`/`mm`/`dd`/`doy` above.
 
-**`FieldType` must be `datetime`, not `date` or `text`.** `date` records only the date with no
-time; anything else records a placeholder, not a timestamp, because there is no calculation and
-no reserved meaning attached to the FieldName for the app to fall back on.
+**`FieldType` must be `datetime`, not `date` or `text`** — enforced by the generator; anything
+else is a validation error.
+
+**Required, not optional.** Every `automatic` field needs a `calc:` block (or one of the handful
+of documented exemptions — see [Silent-Failure Checks](#silent-failure-checks)); a blank
+Responses column on a `datetime` automatic field is a build-blocking error now, not an implicit
+custom-timestamp fallback.
 
 **Why not a `date_offset` calculation from `starttime`?** `date_offset` computes a *guess*
 forward or backward from another date, in whole days/weeks/months/years — it has no
@@ -907,6 +915,23 @@ author `preserve: true` from the Excel dictionary at all (a pre-existing gap in 
 generator, not specific to this type). If a value needs to survive an edit unchanged, a
 Computed Automatic Variable is the only option that does that today; use `date_part` when
 tracking a live source field is exactly what you want.
+
+#### 12. Timestamp
+Stamps the current date-and-time the moment this row is reached in the questionnaire — a
+mid-questionnaire timestamp, at whatever position you place the row. No parameters.
+
+**Requirements:** `FieldType` must be `datetime`.
+
+```
+calc:timestamp
+```
+
+This is the one calc type that always generates with `preserve='true'` baked in, regardless
+of the pre-existing "no `preserve: true` from Excel" gap noted above for `date_part` — a
+"time this section was reached" stamp should freeze on first capture, the same way
+`starttime`/`stoptime` do, not silently jump to the edit time if the record is opened again
+later. See [Custom Timestamp Fields](#custom-timestamp-fields) for the full explanation of
+why this exists as its own type rather than a `date_part`/`constant` variant.
 
 ---
 

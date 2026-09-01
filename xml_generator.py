@@ -274,6 +274,8 @@ class XmlGenerator:
             wl(
                 f"\t\t<calculation type='date_part' field='{q.calculationLookupField}' unit='{q.calculationUnit}' />"
             )
+        elif q.calculationType == CalculationType.TIMESTAMP:
+            wl("\t\t<calculation type='timestamp' preserve='true' />")
 
     def _generate_calculation_part(self, wl, part: CalculationPart, indent_level: int) -> None:
         indent = "\t" * indent_level

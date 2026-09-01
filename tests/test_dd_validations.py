@@ -143,20 +143,19 @@ class AutomaticNeedsCalculationTests(unittest.TestCase):
         self.assertEqual(len(errors(reader)), 1)
         self.assertIn("'region'", errors(reader)[0])
 
-    def test_a_custom_datetime_field_is_exempt(self):
-        # A non-reserved, non-KNOWN_AUTOMATIC_FIELDS name with FieldType
-        # datetime is a deliberate mid-questionnaire timestamp -- the app
-        # stamps it with the current time when its row is reached, the same
-        # way starttime/stoptime work. See "Custom Timestamp Fields" in
-        # README.md.
+    def test_a_bare_datetime_field_is_no_longer_exempt(self):
+        # There used to be a FieldType-based exemption here: a non-reserved,
+        # non-KNOWN_AUTOMATIC_FIELDS name with FieldType datetime and a blank
+        # Responses column was treated as a deliberate mid-questionnaire
+        # timestamp. That implicit fallback is gone -- use calc:timestamp
+        # instead (see tests/test_timestamp_calc.py and "Custom Timestamp
+        # Fields" in README.md).
         reader = read([row("time_eligible", "automatic", "datetime")])
 
-        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("has no calculation (the Responses column is blank)", errors(reader)[0])
 
     def test_a_custom_non_datetime_field_is_still_reported(self):
-        # Only `datetime` gets the "app stamps it automatically" exemption --
-        # `date`/`text`/etc. have no such runtime fallback, so a blank
-        # Responses column there is still a real bug.
         reader = read([row("region", "automatic", "date")])
 
         self.assertTrue(reader.errorsEncountered)

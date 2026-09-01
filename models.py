@@ -87,6 +87,7 @@ class CalculationType(str, Enum):
     DATE_OFFSET = "DateOffset"
     DATE_DIFF = "DateDiff"
     DATE_PART = "DatePart"
+    TIMESTAMP = "Timestamp"
 
 
 @dataclass
