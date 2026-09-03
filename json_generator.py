@@ -24,7 +24,10 @@ CRF_FIELD_ORDER = [
     "parenttable",
     "incrementfield",
     "requireslink",
-    "repeat_count_source",
+    # NOTE: the C# class this order mirrors also declares
+    # `repeat_count_source` here. It is omitted deliberately: nothing on
+    # the Python side ever set it, so it was always absent from the
+    # output, and only fields that are actually emitted affect ordering.
     "repeat_count_field",
     "auto_start_repeat",
     "repeat_enforce_count",

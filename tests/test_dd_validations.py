@@ -720,6 +720,29 @@ class TrailingVariableInExpressionTests(unittest.TestCase):
 
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
 
+class FieldNameMessageTests(unittest.TestCase):
+    """The message an author gets should name what is actually wrong."""
+
+    def test_a_field_name_with_a_space_says_so(self):
+        # A space is neither alnum nor "_", so the generic
+        # "only letters, digits and underscores" branch used to fire first and
+        # this specific message was unreachable.
+        reader = read([numeric_row("has space")])
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("contains a space", "\n".join(errors(reader)))
+
+    def test_other_invalid_characters_still_get_the_generic_message(self):
+        reader = read([numeric_row("has-dash")])
+        self.assertTrue(reader.errorsEncountered)
+        joined = "\n".join(errors(reader))
+        self.assertIn("Only letters, digits, and underscores", joined)
+        self.assertNotIn("contains a space", joined)
+
+    def test_a_leading_underscore_is_still_reported(self):
+        reader = read([numeric_row("_leading")])
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("starts with an underscore", "\n".join(errors(reader)))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -204,7 +204,6 @@ class Crf:
     parenttable: str | None = None
     incrementfield: str | None = None
     requireslink: int | None = None
-    repeat_count_source: str | None = None
     repeat_count_field: str | None = None
     auto_start_repeat: int | None = None
     repeat_enforce_count: int | None = None

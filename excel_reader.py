@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET
 from typing import Any
 
 from openpyxl.worksheet.worksheet import Worksheet
@@ -305,14 +304,6 @@ class ExcelReader:
         return self.questionList
 
     @staticmethod
-    def count_data_rows(worksheet: Worksheet) -> int:
-        count = 0
-        for row_idx in range(2, worksheet.max_row + 1):
-            if not ExcelReader._is_cell_merged(worksheet, row_idx, 14):
-                count += 1
-        return count
-
-    @staticmethod
     def _split_lines(text: str) -> list[str]:
         return [line for line in re.split(r"\r\n|\n|\r", text) if line]
 
@@ -349,6 +340,8 @@ class ExcelReader:
             return
         if fieldname[0].isdigit():
             self._error(f"ERROR - FieldName: {worksheet} has a FieldName that starts with a number: {fieldname}")
+        elif " " in fieldname:
+            self._error(f"ERROR - FieldName: {worksheet} has a FieldName that contains a space: {fieldname}")
         elif any((not c.isalnum()) and c != "_" for c in fieldname):
             self._error(
                 "ERROR - FieldName: "
@@ -358,8 +351,6 @@ class ExcelReader:
             self._error(f"ERROR - FieldName: {worksheet} has a FieldName that is not all lowercase: {fieldname}")
         elif fieldname[0] == "_":
             self._error(f"ERROR - FieldName: {worksheet} has a FieldName that starts with an underscore: {fieldname}")
-        elif " " in fieldname:
-            self._error(f"ERROR - FieldName: {worksheet} has a FieldName that contains a space: {fieldname}")
         elif fieldname.lower() == "end":
             # Reserved as the Skip target sentinel meaning "end of form" (see
             # `_check_skip_to_field_names`). Not part of RESERVED_SYSTEM_FIELDS
@@ -487,10 +478,6 @@ class ExcelReader:
         if self.DATE_RANGE_RE.fullmatch(value):
             return
         if self.HARDCODED_DATE_RE.fullmatch(value):
-            try:
-                ET.fromstring(f"<d>{value}</d>")
-            except Exception:
-                pass
             try:
                 from datetime import datetime
 
@@ -996,7 +983,11 @@ class ExcelReader:
             return "&lt;&gt;"
         if op in {"=", "!=", "in", "not in"}:
             return op
-        return "="
+        raise ValueError(
+            f"Unsupported filter operator {op!r}. FILTER_MATCH_RE only matches "
+            "the operators handled above, so reaching here means the regex and "
+            "this function have drifted apart."
+        )
 
     def _parse_dynamic_responses(self, responses: str, question: Question, worksheet: str, fieldname: str) -> None:
         for line in self._split_lines(responses):
