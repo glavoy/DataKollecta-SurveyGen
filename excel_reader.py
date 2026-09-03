@@ -18,6 +18,8 @@ from models import (
     Question,
     ResponseSourceType,
 )
+from skip_parser import parse_skip, split_skip_lines
+
 
 class ExcelReader:
     NUMBER_OF_COLUMNS = 14
@@ -543,53 +545,24 @@ class ExcelReader:
             )
 
     def _check_skip_syntax(self, worksheet: str, skip_text: str, fieldname: str) -> None:
-        skips = self._split_lines(skip_text)
-        for skip in skips:
-            if ":" not in skip:
-                self._error(f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for Skip: {skip}")
-                return
+        """Reject anything `skip_parser` cannot read.
 
-            skip_type = "preskip" if skip[: skip.find(":")] == "preskip" else "postskip"
-            if skip_type not in {"preskip", "postskip"}:
-                self._error(f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for Skip: {skip}")
-                return
-
-            parts = skip.split(",")
-            if len(parts) != 2:
-                self._error(f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for Skip: {skip}")
-                return
-
-            len_skip = 13 if skip_type == "postskip" else 12
-            logic_section = parts[0]
-            logic_string = logic_section.split(":")
-            if len(logic_string) != 2:
-                self._error(f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for Skip: {skip}")
-                return
-
-            logic_tokens = logic_section.split(" ")
-            if len(logic_tokens) != 5 and "does not contain" not in logic_section:
-                self._error(f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for Skip: {skip}")
-                return
-            if len(logic_tokens) != 7 and "does not contain" in logic_section:
-                self._error(f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for Skip: {skip}")
-                return
-
-            space_indices = [i for i, ch in enumerate(skip) if ch == " "]
-            if len(space_indices) < 4:
-                self._error(f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for Skip: {skip}")
-                return
-            fieldname_to_check = skip[len_skip : space_indices[2]]
-            if " " in fieldname_to_check:
-                self._error(f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for Skip: {skip}")
-                return
-
-            if "does not contain" not in logic_section:
-                condition = skip[space_indices[2] + 1 : space_indices[3]]
-                if condition not in {"=", ">", ">=", "<", "<=", "<>", "'contains'"}:
-                    self._error(
-                        f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' has invalid syntax for LogicCheck: {skip}"
-                    )
-                    return
+        This used to hand-roll its own parse -- token counts, space offsets and
+        a `len_skip = 13 if postskip else 12` slice -- while the generator
+        hand-rolled a different one. Going through the shared parser is what
+        makes it impossible for a string this accepts to be dropped later (see
+        `skip_parser`'s module docstring for the `Preskip:` case that motivated
+        it).
+        """
+        for skip in split_skip_lines(skip_text):
+            if parse_skip(skip) is None:
+                self._error(
+                    f"ERROR - Skip: FieldName '{fieldname}' in worksheet '{worksheet}' "
+                    f"has invalid syntax for Skip: {skip}. Expected "
+                    "'preskip: if <field> <operator> <value>, skip to <target>' "
+                    "(operators: =, >, >=, <, <=, <>, 'contains', 'does not contain'; "
+                    "the value must be a single word with no spaces)."
+                )
 
     def _check_logic_field_names(self, worksheet: str) -> None:
         field_index = {q.fieldName: i for i, q in enumerate(self.questionList)}
@@ -732,15 +705,15 @@ class ExcelReader:
             if not question.skip:
                 continue
             cur_field = question.fieldName
-            for skip in self._split_lines(question.skip):
-                words = [w for w in skip.split(" ") if w]
-                if len(words) < 4:
-                    self._error(
-                        f"ERROR - Skip: In worksheet '{worksheet}', the skip for FieldName '{cur_field}' has invalid structure: {skip}"
-                    )
+            for skip in split_skip_lines(question.skip):
+                parsed = parse_skip(skip)
+                if parsed is None:
+                    # `_check_skip_syntax` already reported it, and the
+                    # worksheet-level gate means this check normally does not
+                    # run at all once that fired.
                     continue
-                fieldname_to_check = words[2].strip().strip(",")
-                fieldname_to_skip_to = words[-1].strip()
+                fieldname_to_check = parsed.field
+                fieldname_to_skip_to = parsed.target
                 cur_index = field_index[cur_field]
 
                 if fieldname_to_check.lower() in RESERVED_SYSTEM_FIELDS:
@@ -973,19 +946,16 @@ class ExcelReader:
         for question in self.questionList:
             if not question.skip:
                 continue
-            for skip in self._split_lines(question.skip):
-                stripped = skip.strip()
-                if not stripped.lower().startswith("preskip"):
+            for skip in split_skip_lines(question.skip):
+                parsed = parse_skip(skip)
+                if parsed is None or parsed.kind != "preskip":
                     continue
-                words = [w for w in stripped.split(" ") if w]
-                if len(words) < 4:
-                    continue
-                if words[2].strip().strip(",") == question.fieldName:
+                if parsed.field == question.fieldName:
                     self._error(
                         f"ERROR - Skip: In worksheet '{worksheet}', the preskip for FieldName "
                         f"'{question.fieldName}' tests its own field. It cannot fire on a new "
                         "record, and on an existing record it erases the answer. Use a "
-                        f"postskip instead: {stripped}"
+                        f"postskip instead: {skip.strip()}"
                     )
 
     def _check_max_characters_is_meaningful(self, worksheet: str) -> None:

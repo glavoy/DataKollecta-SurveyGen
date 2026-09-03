@@ -53,7 +53,14 @@ class SurveyGenProcessor:
             # manifest fills in (linking field, increment field, primary key,
             # idconfig parts), so they are not reported as missing a calculation.
             crfs_ws = workbook["crfs"] if "crfs" in workbook.sheetnames else None
-            crfs = CrfReader.read_crfs_worksheet(crfs_ws) if crfs_ws is not None else []
+            if crfs_ws is not None:
+                crfs, crf_errors = CrfReader.read_crfs_worksheet(crfs_ws)
+                if crf_errors:
+                    self.logstring.append("\rChecking worksheet: 'crfs'")
+                    self.logstring.extend(crf_errors)
+                    self.errorsEncountered = True
+            else:
+                crfs = []
             supplied_by_table = self._supplied_auto_fields(crfs)
 
             for ws in worksheets:
@@ -69,17 +76,32 @@ class SurveyGenProcessor:
 
             if not self.errorsEncountered:
                 for ws_name, qlist in self.question_list_cache.items():
-                    xml_name = ws_name.replace("_dd", ".xml").replace("_xml", ".xml")
-                    xml_files.append(xml_name)
-
                     xml_generator = XmlGenerator()
                     xml_path = xml_generator.write_xml(ws_name, qlist, output_path)
                     self.logstring.extend(xml_generator.logstring)
+                    self.generated_files.append(xml_path)
+
+                    # Taken from the file that was actually written rather than
+                    # re-derived from the worksheet name. The two derivations
+                    # used to disagree (this one did
+                    # `ws_name.replace("_dd", ".xml").replace("_xml", ".xml")`,
+                    # `write_xml` sliced the suffix), so a sheet named
+                    # `hh_xml_dd` put `hh.xml.xml` in the manifest while the
+                    # zip held `hh_xml.xml` -- a manifest naming a file that
+                    # was not in the package.
+                    xml_files.append(xml_path.name)
 
                     if not self._validate_xml_syntax(xml_path):
                         self.errorsEncountered = True
-                    self.generated_files.append(xml_path)
 
+            # Deliberately a second, separate check rather than part of the
+            # block above. The XML loop can set `errorsEncountered` itself, and
+            # when it did, the enclosing `if` had already been entered -- so
+            # the manifest was written anyway and only the zip was skipped.
+            # That left every .xml and the .gistx sitting in outputPath while
+            # the console said "HAVE NOT been created", and hand-zipping those
+            # files ships a package containing malformed XML.
+            if not self.errorsEncountered:
                 manifest = SurveyManifest(
                     surveyName=self.config.surveyName,
                     surveyId=self.config.surveyId,
@@ -93,6 +115,13 @@ class SurveyGenProcessor:
                 self.logstring.append("Successfully generated survey_manifest.gistx")
                 self.generated_files.append(manifest_path)
 
+                self._create_zip_file()
+            else:
+                self._discard_generated_files()
+
+            # After the zip, so `_create_zip_file`'s own "Added to zip" and
+            # "Deleted temporary file" lines land before the banner instead of
+            # after the end of the file.
             self.logstring.extend(
                 [
                     "\r--------------------------------------------------------------------------------",
@@ -101,16 +130,13 @@ class SurveyGenProcessor:
                 ]
             )
 
-            if not self.errorsEncountered:
-                self._create_zip_file()
-
             self._write_logfile()
 
             # Console equivalent of the Windows app's SUCCESS/ERRORS FOUND message boxes
             logfile_path = output_path / "gistlogfile.txt"
             if self.errorsEncountered:
                 print("ERRORS FOUND: The Data Dictionary contains errors!")
-                print("The XML files and manifest HAVE NOT been created.")
+                print("No package was created: the XML files and manifest have been discarded.")
                 print(f"Please refer to the log file and rectify all errors: {logfile_path}")
             else:
                 print("SUCCESS: Built the XML file(s) and the manifest. No errors were found.")
@@ -200,6 +226,19 @@ class SurveyGenProcessor:
             if file_path.exists():
                 file_path.unlink()
                 self.logstring.append(f"Deleted temporary file: {file_path.name}")
+
+    def _discard_generated_files(self) -> None:
+        """Remove part-built output after a failure.
+
+        Cleanup used to live only inside `_create_zip_file`, which is skipped
+        on failure -- so a failed run left loose .xml files (and, before the
+        gate above was split in two, survey_manifest.gistx) behind for someone
+        to zip by hand.
+        """
+        for file_path in self.generated_files:
+            if file_path.exists():
+                file_path.unlink()
+                self.logstring.append(f"Discarded incomplete output: {file_path.name}")
 
 
 def run_from_config_file(config_file: str | Path) -> int:

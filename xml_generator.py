@@ -12,12 +12,69 @@ from models import (
     Question,
     ResponseSourceType,
 )
+from skip_parser import ParsedSkip, parse_skip, split_skip_lines
 
 # The Windows app writes files with .NET StreamWriter on Windows: every WriteLine
 # ends with CRLF, and WriteLine("\n") emits "\n\r\n". NEWLINE/BLANK_LINE reproduce
 # those exact byte sequences so output diffs cleanly against the original app.
 NEWLINE = "\r\n"
 BLANK_LINE = "\n\r\n"
+
+
+# A character reference that is already written out: `&amp;`, `&lt;`, `&#233;`,
+# `&#x2019;`. Authors have been hand-escaping their cells to work around the
+# missing escaping -- the AVERT French dictionary writes `&lt;14 ou &gt;35`
+# directly into a logic-check message -- so escaping has to leave an existing
+# reference alone or it becomes `&amp;lt;14`, which then renders as literal
+# "&lt;14" on the device.
+_CHARACTER_REFERENCE_RE = re.compile(r"&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*);")
+
+
+def _escape_ampersands(text: str) -> str:
+    """Escape every `&` that does not already begin a character reference."""
+    out: list[str] = []
+    position = 0
+    while True:
+        found = text.find("&", position)
+        if found < 0:
+            out.append(text[position:])
+            return "".join(out)
+        out.append(text[position:found])
+        existing = _CHARACTER_REFERENCE_RE.match(text, found)
+        if existing:
+            out.append(existing.group(0))
+            position = existing.end()
+        else:
+            out.append("&amp;")
+            position = found + 1
+
+
+def _esc_text(value: object) -> str:
+    """Escape a value written as element text.
+
+    Everything a data dictionary author types goes through this or
+    `_esc_attr`. Before they existed every value was interpolated raw, so an
+    `&` in a response label or a `<` in a question text produced XML that
+    `ET.parse` rejects -- and the reported error named a line and column, not
+    the field, leaving the author to find it by hand in a 400-row sheet.
+
+    Idempotent: text that is already escaped survives unchanged, so this can
+    be applied to existing dictionaries without rewriting their cells.
+    """
+    text = _escape_ampersands(str(value))
+    return text.replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _esc_attr(value: object) -> str:
+    """Escape a value written inside an attribute.
+
+    Escapes both quote characters, so it is safe regardless of whether the
+    attribute is single-quoted (nearly all of them) or double-quoted (`mask`).
+    An apostrophe was the most likely break in practice: the French
+    dictionaries put `d'accord` and `n'a pas` in `dont_know`/`not_in_list`
+    labels, which are emitted as `label='...'`.
+    """
+    return _esc_text(value).replace("'", "&apos;").replace('"', "&quot;")
 
 
 class XmlGenerator:
@@ -59,37 +116,42 @@ class XmlGenerator:
                 if q.fieldName.lower() in RESERVED_SYSTEM_FIELDS:
                     continue
 
-                wl(f"\t<question type = '{q.questionType}' fieldname = '{q.fieldName}' fieldtype = '{q.fieldType}'>")
+                wl(
+                    f"\t<question type = '{_esc_attr(q.questionType)}' "
+                    f"fieldname = '{_esc_attr(q.fieldName)}' fieldtype = '{_esc_attr(q.fieldType)}'>"
+                )
 
                 if q.questionType != "automatic":
-                    wl(f"\t\t<text>{q.questionText}</text>")
+                    wl(f"\t\t<text>{_esc_text(q.questionText)}</text>")
 
                 if q.questionType == "automatic" and q.calculationType != CalculationType.NONE:
                     self._generate_calculation_xml(wl, q)
 
                 if q.maxCharacters != "-9":
-                    wl(f"\t\t<maxCharacters>{q.maxCharacters}</maxCharacters>")
+                    wl(f"\t\t<maxCharacters>{_esc_text(q.maxCharacters)}</maxCharacters>")
 
                 if q.mask:
-                    wl(f"\t\t<mask value=\"{q.mask}\" />")
+                    wl(f"\t\t<mask value=\"{_esc_attr(q.mask)}\" />")
 
                 if q.uniqueCheckMessage:
                     wl("\t\t<unique_check>")
-                    wl(f"\t\t\t<message>{q.uniqueCheckMessage}</message>")
+                    wl(f"\t\t\t<message>{_esc_text(q.uniqueCheckMessage)}</message>")
                     wl("\t\t</unique_check>")
 
                 if q.questionType != "date" and q.lowerRange != "-9":
+                    lower = _esc_attr(q.lowerRange)
+                    upper = _esc_attr(q.upperRange)
                     wl("\t\t<numeric_check>")
                     wl(
-                        f"\t\t\t<values minvalue ='{q.lowerRange}' maxvalue='{q.upperRange}' other_values = '{q.lowerRange}' "
-                        f"message = 'Number must be between {q.lowerRange} and {q.upperRange}!'></values>"
+                        f"\t\t\t<values minvalue ='{lower}' maxvalue='{upper}' other_values = '{lower}' "
+                        f"message = 'Number must be between {lower} and {upper}!'></values>"
                     )
                     wl("\t\t</numeric_check>")
 
                 if q.questionType == "date":
                     wl("\t\t<date_range>")
-                    wl(f"\t\t\t<min_date>{q.lowerRange}</min_date>")
-                    wl(f"\t\t\t<max_date>{q.upperRange}</max_date>")
+                    wl(f"\t\t\t<min_date>{_esc_text(q.lowerRange)}</min_date>")
+                    wl(f"\t\t\t<max_date>{_esc_text(q.upperRange)}</max_date>")
                     wl("\t\t</date_range>")
 
                 for logic_check in q.logicChecks:
@@ -100,27 +162,38 @@ class XmlGenerator:
                 if q.questionType in {"radio", "checkbox", "combobox"}:
                     attrs = ""
                     if q.responseSourceType == ResponseSourceType.CSV:
-                        attrs += f" source='csv' file='{q.responseSourceFile}'"
+                        attrs += f" source='csv' file='{_esc_attr(q.responseSourceFile)}'"
                     elif q.responseSourceType == ResponseSourceType.DATABASE:
-                        attrs += f" source='database' table='{q.responseSourceTable}'"
+                        attrs += f" source='database' table='{_esc_attr(q.responseSourceTable)}'"
                     wl(f"\t\t<responses{attrs}>")
 
                     for flt in q.responseFilters:
-                        wl(f"\t\t\t<filter column='{flt.column}' operator='{flt.operator}' value='{flt.value}'/>")
+                        # `flt.operator` is deliberately NOT escaped: the
+                        # dictionary's operators are already encoded into
+                        # entities by `_parse_operator` when they are read, so
+                        # escaping again would produce `&amp;lt;`.
+                        wl(
+                            f"\t\t\t<filter column='{_esc_attr(flt.column)}' "
+                            f"operator='{flt.operator}' value='{_esc_attr(flt.value)}'/>"
+                        )
                     if q.responseDisplayColumn:
-                        wl(f"\t\t\t<display column='{q.responseDisplayColumn}'/>")
+                        wl(f"\t\t\t<display column='{_esc_attr(q.responseDisplayColumn)}'/>")
                     if q.responseValueColumn:
-                        wl(f"\t\t\t<value column='{q.responseValueColumn}'/>")
+                        wl(f"\t\t\t<value column='{_esc_attr(q.responseValueColumn)}'/>")
                     if q.responseDistinct is not None:
                         wl(f"\t\t\t<distinct>{str(q.responseDistinct).lower()}</distinct>")
                     if q.responseEmptyMessage:
-                        wl(f"\t\t\t<empty_message>{q.responseEmptyMessage}</empty_message>")
+                        wl(f"\t\t\t<empty_message>{_esc_text(q.responseEmptyMessage)}</empty_message>")
                     if q.responseDontKnowValue:
-                        label_attr = f" label='{q.responseDontKnowLabel}'" if q.responseDontKnowLabel else ""
-                        wl(f"\t\t\t<dont_know value='{q.responseDontKnowValue}'{label_attr}/>")
+                        label_attr = (
+                            f" label='{_esc_attr(q.responseDontKnowLabel)}'" if q.responseDontKnowLabel else ""
+                        )
+                        wl(f"\t\t\t<dont_know value='{_esc_attr(q.responseDontKnowValue)}'{label_attr}/>")
                     if q.responseNotInListValue:
-                        label_attr = f" label='{q.responseNotInListLabel}'" if q.responseNotInListLabel else ""
-                        wl(f"\t\t\t<not_in_list value='{q.responseNotInListValue}'{label_attr}/>")
+                        label_attr = (
+                            f" label='{_esc_attr(q.responseNotInListLabel)}'" if q.responseNotInListLabel else ""
+                        )
+                        wl(f"\t\t\t<not_in_list value='{_esc_attr(q.responseNotInListValue)}'{label_attr}/>")
 
                     if q.responseSourceType == ResponseSourceType.STATIC:
                         responses = [r for r in re.split(r"\r\n|\n|\r", q.responses) if r]
@@ -131,22 +204,39 @@ class XmlGenerator:
                                 index = response.find(":")
                                 value = response[:index]
                                 label = response[index + 1 :].strip()
-                                wl(f"\t\t\t<response value = '{value}'>{label}</response>")
+                                wl(
+                                    f"\t\t\t<response value = '{_esc_attr(value)}'>"
+                                    f"{_esc_text(label)}</response>"
+                                )
                     wl("\t\t</responses>")
 
                 if q.skip:
-                    skips = [s for s in re.split(r"\r\n|\n|\r", q.skip) if s]
-                    pre = [s for s in skips if s[: s.find(":")] == "preskip"]
-                    post = [s for s in skips if s[: s.find(":")] == "postskip"]
+                    parsed_skips: list[ParsedSkip] = []
+                    for line in split_skip_lines(q.skip):
+                        parsed = parse_skip(line)
+                        if parsed is None:
+                            # Validation rejects these before generation ever
+                            # runs, so reaching here means the validator and
+                            # this module have drifted apart again. Fail loudly
+                            # rather than silently dropping the rule, which is
+                            # exactly what the old two-parser split did.
+                            raise ValueError(
+                                f"Unparseable Skip on field '{q.fieldName}' "
+                                f"in worksheet '{worksheet_name}': {line!r}"
+                            )
+                        parsed_skips.append(parsed)
+
+                    pre = [s for s in parsed_skips if s.kind == "preskip"]
+                    post = [s for s in parsed_skips if s.kind == "postskip"]
                     if pre:
                         wl("\t\t<preskip>")
                         for s in pre:
-                            wl(self._generate_skip(s, "preSkip"))
+                            wl(self._generate_skip(s))
                         wl("\t\t</preskip>")
                     if post:
                         wl("\t\t<postskip>")
                         for s in post:
-                            wl(self._generate_skip(s, "postSkip"))
+                            wl(self._generate_skip(s))
                         wl("\t\t</postskip>")
 
                 if q.dontKnow in {"TRUE", "True"}:
@@ -172,30 +262,24 @@ class XmlGenerator:
 
         return out_file
 
-    def _generate_skip(self, skip: str, skip_type: str) -> str:
-        len_skip = 13 if skip_type == "postSkip" else 12
-        space_indices = [i for i, ch in enumerate(skip) if ch == " "]
-        fieldname_to_check = skip[len_skip : space_indices[2]]
-
-        if len(space_indices) == 9:
-            condition = "does not contain"
-            value = skip[space_indices[5] + 1 : space_indices[6] - 1]
-        elif "contains" in skip:
-            condition = "contains"
-            value = skip[space_indices[3] + 1 : space_indices[4] - 1]
-        else:
-            condition = skip[space_indices[2] + 1 : space_indices[3]]
-            condition = condition.replace("<", "&lt;").replace(">", "&gt;")
-            value = skip[space_indices[3] + 1 : space_indices[4] - 1]
-
-        fieldname_to_skip_to = skip[space_indices[-1] + 1 :]
+    def _generate_skip(self, skip: ParsedSkip) -> str:
+        # The operator is the only pre-escaped-looking value here, and it comes
+        # from the parser's closed vocabulary rather than free text, so `<`/`>`
+        # are the only characters that can need encoding. Everything else on
+        # the line is escaped as an ordinary attribute.
+        condition = skip.operator.replace("<", "&lt;").replace(">", "&gt;")
         return (
-            f"\t\t\t<skip fieldname='{fieldname_to_check}' condition = '{condition}' response='{value}' "
-            f"response_type='fixed' skiptofieldname ='{fieldname_to_skip_to}'></skip>"
+            f"\t\t\t<skip fieldname='{_esc_attr(skip.field)}' condition = '{condition}' "
+            f"response='{_esc_attr(skip.value)}' "
+            f"response_type='fixed' skiptofieldname ='{_esc_attr(skip.target)}'></skip>"
         )
 
     def _generate_logic_check(self, logic_check: str) -> str:
         expression, message = [p.strip() for p in logic_check.split(";", 1)]
+        # The expression's own comparison operators are encoded below, so it
+        # must not go through `_esc_text` as well. The message is free text and
+        # must.
+        message = _esc_text(message)
         expression = expression.replace("!=", "&lt;&gt;")
         expression = expression.replace("<>", "&lt;&gt;")
         expression = expression.replace("<=", "&lt;=")
@@ -219,17 +303,29 @@ class XmlGenerator:
         return f"\t\t\t{expression}; {message}"
 
     def _generate_calculation_xml(self, wl, q: Question) -> None:
+        # `_convert_operator_to_xml` already returns entity-encoded operators,
+        # so `op` below is the one value here that must not be escaped again.
+        field = _esc_attr(q.calculationLookupField)
+        constant = _esc_attr(q.calculationConstantValue)
+        unit = _esc_attr(q.calculationUnit)
+
         if q.calculationType == CalculationType.QUERY:
             wl("\t\t<calculation type='query'>")
-            wl(f"\t\t\t<sql>{q.calculationQuerySql}</sql>")
+            wl(f"\t\t\t<sql>{_esc_text(q.calculationQuerySql)}</sql>")
             for param in q.calculationQueryParameters:
-                wl(f"\t\t\t<parameter name='{param.name}' field='{param.fieldName}' />")
+                wl(
+                    f"\t\t\t<parameter name='{_esc_attr(param.name)}' "
+                    f"field='{_esc_attr(param.fieldName)}' />"
+                )
             wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.CASE:
             wl("\t\t<calculation type='case'>")
             for cond in q.calculationCaseConditions:
                 op = self._convert_operator_to_xml(cond.operator)
-                wl(f"\t\t\t<when field='{cond.field}' operator='{op}' value='{cond.value}'>")
+                wl(
+                    f"\t\t\t<when field='{_esc_attr(cond.field)}' operator='{op}' "
+                    f"value='{_esc_attr(cond.value)}'>"
+                )
                 if cond.result:
                     self._generate_calculation_part(wl, cond.result, 4)
                 wl("\t\t\t</when>")
@@ -239,63 +335,64 @@ class XmlGenerator:
                 wl("\t\t\t</else>")
             wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.CONSTANT:
-            wl(f"\t\t<calculation type='constant' value='{q.calculationConstantValue}' />")
+            wl(f"\t\t<calculation type='constant' value='{constant}' />")
         elif q.calculationType == CalculationType.LOOKUP:
-            wl(f"\t\t<calculation type='lookup' field='{q.calculationLookupField}' />")
+            wl(f"\t\t<calculation type='lookup' field='{field}' />")
         elif q.calculationType == CalculationType.MATH:
-            wl(f"\t\t<calculation type='math' operator='{q.calculationMathOperator}'>")
+            wl(f"\t\t<calculation type='math' operator='{_esc_attr(q.calculationMathOperator)}'>")
             for part in q.calculationMathParts:
                 self._generate_calculation_part(wl, part, 3)
             wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.CONCAT:
-            separator_attr = f" separator='{q.calculationConcatSeparator}'" if q.calculationConcatSeparator else ""
+            separator_attr = (
+                f" separator='{_esc_attr(q.calculationConcatSeparator)}'" if q.calculationConcatSeparator else ""
+            )
             wl(f"\t\t<calculation type='concat'{separator_attr}>")
             for part in q.calculationConcatParts:
                 self._generate_calculation_part(wl, part, 3)
             wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.AGE_FROM_DATE:
-            wl(
-                f"\t\t<calculation type='age_from_date' field='{q.calculationLookupField}' value='{q.calculationConstantValue}'/>"
-            )
+            wl(f"\t\t<calculation type='age_from_date' field='{field}' value='{constant}'/>")
         elif q.calculationType == CalculationType.AGE_AT_DATE:
-            separator_attr = f" separator='{q.calculationConcatSeparator}'" if q.calculationConcatSeparator else ""
+            separator_attr = (
+                f" separator='{_esc_attr(q.calculationConcatSeparator)}'" if q.calculationConcatSeparator else ""
+            )
             wl(
-                f"\t\t<calculation type='age_at_date' field='{q.calculationLookupField}' value='{q.calculationConstantValue}'{separator_attr}/>"
+                f"\t\t<calculation type='age_at_date' field='{field}' value='{constant}'{separator_attr}/>"
             )
         elif q.calculationType == CalculationType.DATE_OFFSET:
-            wl(
-                f"\t\t<calculation type='date_offset' field='{q.calculationLookupField}' value='{q.calculationConstantValue}' />"
-            )
+            wl(f"\t\t<calculation type='date_offset' field='{field}' value='{constant}' />")
         elif q.calculationType == CalculationType.DATE_DIFF:
             wl(
-                f"\t\t<calculation type='date_diff' field='{q.calculationLookupField}' value='{q.calculationConstantValue}' unit='{q.calculationUnit}' />"
+                f"\t\t<calculation type='date_diff' field='{field}' value='{constant}' unit='{unit}' />"
             )
         elif q.calculationType == CalculationType.DATE_PART:
-            wl(
-                f"\t\t<calculation type='date_part' field='{q.calculationLookupField}' unit='{q.calculationUnit}' />"
-            )
+            wl(f"\t\t<calculation type='date_part' field='{field}' unit='{unit}' />")
         elif q.calculationType == CalculationType.TIMESTAMP:
             wl("\t\t<calculation type='timestamp' preserve='true' />")
 
     def _generate_calculation_part(self, wl, part: CalculationPart, indent_level: int) -> None:
         indent = "\t" * indent_level
         if part.type == CalculationType.CONSTANT:
-            wl(f"{indent}<result type='constant' value='{part.constantValue}' />")
+            wl(f"{indent}<result type='constant' value='{_esc_attr(part.constantValue)}' />")
         elif part.type == CalculationType.LOOKUP:
-            wl(f"{indent}<part type='lookup' field='{part.lookupField}' />")
+            wl(f"{indent}<part type='lookup' field='{_esc_attr(part.lookupField)}' />")
         elif part.type == CalculationType.QUERY:
             wl(f"{indent}<part type='query'>")
-            wl(f"{indent}\t<sql>{part.querySql}</sql>")
+            wl(f"{indent}\t<sql>{_esc_text(part.querySql)}</sql>")
             for param in part.queryParameters:
-                wl(f"{indent}\t<parameter name='{param.name}' field='{param.fieldName}' />")
+                wl(
+                    f"{indent}\t<parameter name='{_esc_attr(param.name)}' "
+                    f"field='{_esc_attr(param.fieldName)}' />"
+                )
             wl(f"{indent}</part>")
         elif part.type == CalculationType.MATH:
-            wl(f"{indent}<part type='math' operator='{part.mathOperator}'>")
+            wl(f"{indent}<part type='math' operator='{_esc_attr(part.mathOperator)}'>")
             for nested in part.parts:
                 self._generate_calculation_part(wl, nested, indent_level + 1)
             wl(f"{indent}</part>")
         elif part.type == CalculationType.CONCAT:
-            separator_attr = f" separator='{part.concatSeparator}'" if part.concatSeparator else ""
+            separator_attr = f" separator='{_esc_attr(part.concatSeparator)}'" if part.concatSeparator else ""
             wl(f"{indent}<part type='concat'{separator_attr}>")
             for nested in part.parts:
                 self._generate_calculation_part(wl, nested, indent_level + 1)

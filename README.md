@@ -208,8 +208,10 @@ analysis.
 2. In `config.json`, set `surveyName` and `surveyId` to the new revision date. Leave
    `databaseName` **exactly as it was**.
 3. `python main.py`
-4. Check `gistlogfile.txt` — a survey that failed validation still writes a zip for the
-   worksheets that passed, so a clean log is the only proof the package is complete.
+4. Check `gistlogfile.txt`. A run either produces the complete zip or produces nothing at all:
+   validation is all-or-nothing across every worksheet, and a failure discards any XML already
+   written rather than leaving loose files behind. So the presence of the zip is itself proof
+   the package is complete — but read the log anyway for warnings, which do not stop the build.
 5. Deploy the zip and record what went out: the revision date, what changed, and which devices
    received it. The app records `survey_id` on every collected record, so this is what lets you
    tell later which revision a given record was collected under.
@@ -1143,6 +1145,18 @@ preskip: if eligible = 0, skip to end
 **How it works:**
 - If `has_children` equals `0`, then skip to `occupation`
 - The question is never shown if the condition is true
+
+**Accepted spellings.** The prefix is case-insensitive, so `Preskip:` works — which matters,
+because Excel's AutoCorrect capitalizes the first letter of a cell by default. Three ways of
+writing the target clause are all accepted, and all mean the same thing:
+
+```
+preskip: if has_children = 0, skip to occupation
+preskip: if has_children = 0, then skip to occupation
+preskip: if has_children = 0, occupation
+```
+
+The value being compared must be a single word with no spaces, and so must both field names.
 
 #### Postskip
 
