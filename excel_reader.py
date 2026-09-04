@@ -184,7 +184,38 @@ class ExcelReader:
                         )
                     continue
 
-                if self._is_cell_merged(worksheet, row_idx, self.NUMBER_OF_COLUMNS):
+                comments_merge = self._merged_range_at(
+                    worksheet, row_idx, self.NUMBER_OF_COLUMNS
+                )
+                if comments_merge is not None:
+                    # A merged Comments cell skips the whole row. That is right
+                    # for a section-heading banner and wrong for a question,
+                    # and the discriminator is whether the same merged range
+                    # also covers column 1 (FieldName).
+                    #
+                    # A banner is one range spanning the full row, so column 1
+                    # is inside it and there is no FieldName to lose. Every
+                    # merge in both live dictionaries is exactly that -- 28 of
+                    # them, all single-row and all full width -- which is why
+                    # this has to stay a silent skip rather than becoming an
+                    # error.
+                    #
+                    # A merge that covers Comments but *not* column 1 is the
+                    # hazard: the row still has its FieldName and its question,
+                    # and skipping it drops that question from the generated
+                    # XML with no log line anywhere. The author ships a survey
+                    # missing a question and is told nothing. The common way in
+                    # is merging a Comments note down across two question rows.
+                    if comments_merge.min_col == 1:
+                        continue
+                    self._error(
+                        f"ERROR - Merged cell: Row {row_idx} in worksheet "
+                        f"'{worksheet.title}' has its Comments cell merged across "
+                        f"{comments_merge.coord}, which does not include the FieldName "
+                        "column. The whole row is skipped, so its question would be "
+                        "dropped from the generated XML. Unmerge it, or merge the full "
+                        "row if it is meant to be a section heading."
+                    )
                     continue
 
                 q = Question()
@@ -356,12 +387,18 @@ class ExcelReader:
         return cell_raw(ws, row, col)
 
     @staticmethod
-    def _is_cell_merged(ws: Worksheet, row: int, col: int) -> bool:
+    def _merged_range_at(ws: Worksheet, row: int, col: int):
+        """The merged range covering this cell, or `None` if it is not merged.
+
+        Returns the range rather than a bool because the caller has to know
+        *how far* the merge reaches to tell a section heading from a swallowed
+        question -- see the call site.
+        """
         coord = ws.cell(row=row, column=col).coordinate
         for merged_range in ws.merged_cells.ranges:
             if coord in merged_range:
-                return True
-        return False
+                return merged_range
+        return None
 
     def _error(self, message: str) -> None:
         self.errorsEncountered = True

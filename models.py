@@ -151,9 +151,12 @@ class CalculationPart:
     lookupField: str = ""
     querySql: str = ""
     queryParameters: list[CalculationParameter] = field(default_factory=list)
-    mathOperator: str = ""
+    # A part can only ever be constant, lookup or query -- `_parse_part_line`
+    # builds nothing else -- so nothing populates `parts`, and `mathOperator`
+    # and `concatSeparator` had no reader left once the emitter's unreachable
+    # MATH/CONCAT branches went. `parts` stays because the placeholder walk in
+    # excel_reader.py recurses through it defensively; the other two are gone.
     parts: list["CalculationPart"] = field(default_factory=list)
-    concatSeparator: str = ""
 
 
 @dataclass

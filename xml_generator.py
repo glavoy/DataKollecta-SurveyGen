@@ -310,6 +310,20 @@ class XmlGenerator:
         constant = _esc_attr(q.calculationConstantValue)
         unit = _esc_attr(q.calculationUnit)
 
+        # `separator:` is stored on `calculationConcatSeparator` whatever the
+        # calculation type -- excel_reader.py:1243 assigns it generically -- so
+        # the field name is narrower than its use. `concat` joins its operands
+        # with it; on `age_at_date` it carries the reference date, and
+        # `separator:[[startdate]]` is the documented way to get age at
+        # interview (README "Placeholder in a validation message" section).
+        # The expression was written out identically in both branches; it is
+        # one value, so compute it once.
+        separator_attr = (
+            f" separator='{_esc_attr(q.calculationConcatSeparator)}'"
+            if q.calculationConcatSeparator
+            else ""
+        )
+
         if q.calculationType == CalculationType.QUERY:
             wl("\t\t<calculation type='query'>")
             wl(f"\t\t\t<sql>{_esc_text(q.calculationQuerySql)}</sql>")
@@ -328,11 +342,11 @@ class XmlGenerator:
                     f"value='{_esc_attr(cond.value)}'>"
                 )
                 if cond.result:
-                    self._generate_calculation_part(wl, cond.result, 4)
+                    self._generate_calculation_part(wl, cond.result, 4, "result")
                 wl("\t\t\t</when>")
             if q.calculationCaseElse:
                 wl("\t\t\t<else>")
-                self._generate_calculation_part(wl, q.calculationCaseElse, 4)
+                self._generate_calculation_part(wl, q.calculationCaseElse, 4, "result")
                 wl("\t\t\t</else>")
             wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.CONSTANT:
@@ -342,22 +356,16 @@ class XmlGenerator:
         elif q.calculationType == CalculationType.MATH:
             wl(f"\t\t<calculation type='math' operator='{_esc_attr(q.calculationMathOperator)}'>")
             for part in q.calculationMathParts:
-                self._generate_calculation_part(wl, part, 3)
+                self._generate_calculation_part(wl, part, 3, "part")
             wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.CONCAT:
-            separator_attr = (
-                f" separator='{_esc_attr(q.calculationConcatSeparator)}'" if q.calculationConcatSeparator else ""
-            )
             wl(f"\t\t<calculation type='concat'{separator_attr}>")
             for part in q.calculationConcatParts:
-                self._generate_calculation_part(wl, part, 3)
+                self._generate_calculation_part(wl, part, 3, "part")
             wl("\t\t</calculation>")
         elif q.calculationType == CalculationType.AGE_FROM_DATE:
             wl(f"\t\t<calculation type='age_from_date' field='{field}' value='{constant}'/>")
         elif q.calculationType == CalculationType.AGE_AT_DATE:
-            separator_attr = (
-                f" separator='{_esc_attr(q.calculationConcatSeparator)}'" if q.calculationConcatSeparator else ""
-            )
             wl(
                 f"\t\t<calculation type='age_at_date' field='{field}' value='{constant}'{separator_attr}/>"
             )
@@ -385,32 +393,58 @@ class XmlGenerator:
                 f"'{q.fieldName}'. Add a branch here, or the calculation is silently dropped."
             )
 
-    def _generate_calculation_part(self, wl, part: CalculationPart, indent_level: int) -> None:
+    def _generate_calculation_part(
+        self, wl, part: CalculationPart, indent_level: int, tag: str
+    ) -> None:
+        """Emit one operand of a compound calculation as `<tag ...>`.
+
+        **The element name is decided by context, not by part type**, because
+        that is how the app reads it back. `survey_loader.dart` looks for
+        `<part>` inside a `math`/`concat` (`findElements('part')`, line 452)
+        and for `<result>` inside a `when`/`else` (`getElement('result')`,
+        lines 468 and 484). The name carries no other meaning -- Dart's
+        `_parseCalculation` takes the kind from the `type` attribute -- so
+        emitting the wrong one does not malform the XML. It just means the app
+        never finds the operand.
+
+        This used to choose the tag from `part.type`: `<result>` for a
+        constant, `<part>` for everything else. Both live shapes came out right
+        by coincidence -- a case result is always a constant
+        (`_parse_result_value` hardcodes it) and a math/concat operand is
+        usually a lookup or a query. But `part:constant 2.2` inside a `math` is
+        ordinary dictionary usage, and it emitted `<result>` into a context
+        that only reads `<part>`. The operand was dropped, the calculation ran
+        with one fewer, the XML was well-formed and every validation passed:
+        the C4 shape again, in the one place no test looked.
+        """
         indent = "\t" * indent_level
         if part.type == CalculationType.CONSTANT:
-            wl(f"{indent}<result type='constant' value='{_esc_attr(part.constantValue)}' />")
+            wl(f"{indent}<{tag} type='constant' value='{_esc_attr(part.constantValue)}' />")
         elif part.type == CalculationType.LOOKUP:
-            wl(f"{indent}<part type='lookup' field='{_esc_attr(part.lookupField)}' />")
+            wl(f"{indent}<{tag} type='lookup' field='{_esc_attr(part.lookupField)}' />")
         elif part.type == CalculationType.QUERY:
-            wl(f"{indent}<part type='query'>")
+            wl(f"{indent}<{tag} type='query'>")
             wl(f"{indent}\t<sql>{_esc_text(part.querySql)}</sql>")
             for param in part.queryParameters:
                 wl(
                     f"{indent}\t<parameter name='{_esc_attr(param.name)}' "
                     f"field='{_esc_attr(param.fieldName)}' />"
                 )
-            wl(f"{indent}</part>")
-        elif part.type == CalculationType.MATH:
-            wl(f"{indent}<part type='math' operator='{_esc_attr(part.mathOperator)}'>")
-            for nested in part.parts:
-                self._generate_calculation_part(wl, nested, indent_level + 1)
-            wl(f"{indent}</part>")
-        elif part.type == CalculationType.CONCAT:
-            separator_attr = f" separator='{_esc_attr(part.concatSeparator)}'" if part.concatSeparator else ""
-            wl(f"{indent}<part type='concat'{separator_attr}>")
-            for nested in part.parts:
-                self._generate_calculation_part(wl, nested, indent_level + 1)
-            wl(f"{indent}</part>")
+            wl(f"{indent}</{tag}>")
+        else:
+            # There were MATH and CONCAT branches here, recursing over
+            # `part.parts`. They were unreachable: `_parse_part_line` can only
+            # build CONSTANT, LOOKUP or QUERY, so nothing ever populates
+            # `CalculationPart.parts`. Deleted rather than left in place
+            # implying a nesting no dictionary can express -- and this raise,
+            # the same guard its sibling `_generate_calculation_xml` gained, is
+            # what will say so if that ever changes instead of silently
+            # dropping the operand.
+            raise ValueError(
+                f"No XML emitter for calculation part type {part.type!r}. A dictionary "
+                "can only declare constant, lookup or query parts; add a branch here "
+                "if that changes, or the operand is silently dropped."
+            )
 
     @staticmethod
     def _convert_operator_to_xml(op: str) -> str:
