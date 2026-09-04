@@ -57,6 +57,34 @@ class ExcelReader:
     FILTER_MATCH_RE = re.compile(
         r"^(\w+)\s*(?:((?i:not\s+in|in)|>=|<=|!=|<>|=|>|<)\s*)?(.+)$"
     )
+    # Operator spellings a dictionary author plausibly writes that this
+    # filter grammar does NOT support. They matter because FILTER_MATCH_RE's
+    # operator group is optional: with no recognised operator the whole
+    # remainder becomes the *value*, so `filter:region like North` parsed as
+    # `region = 'like North'` and came back from the device as an empty
+    # response list, with nothing said at generation time. Naming them is the
+    # difference between an error the author can fix and a question that is
+    # simply blank in the field.
+    UNSUPPORTED_FILTER_OPERATORS = {
+        "like",
+        "not like",
+        "ilike",
+        "is",
+        "is not",
+        "between",
+        "contains",
+        "does not contain",
+        "starts with",
+        "ends with",
+        "matches",
+        "regexp",
+        "glob",
+    }
+    # A value that begins with one of these is a mistyped operator rather than
+    # data -- `=<`, `==`, `!`, `~` and friends all land here, because the
+    # regex consumed only the part of them it recognised.
+    OPERATOR_LEAD_CHARACTERS = "=<>!~"
+
     PARAMETER_RE = re.compile(r"^(@?\w+)\s*=\s*(\w+)$")
     # Alternatives are ordered longest-first for the same reason as
     # FILTER_MATCH_RE above; "does not contain" embeds its own \s+ since it
@@ -98,6 +126,9 @@ class ExcelReader:
     TYPED_FIELD_TYPES = {"text", "text_integer", "text_decimal", "hourmin"}
     # Field types whose answer is a number, and so can carry a range.
     NUMERIC_FIELD_TYPES = {"text_integer", "text_decimal"}
+    # Question types answered by picking from a list rather than by typing.
+    # Their answer is a code, so a numeric range means nothing for them.
+    SELECTION_QUESTION_TYPES = {"radio", "checkbox", "combobox"}
     # A time is always hh:mm.
     HOURMIN_MAX_CHARACTERS = "=5"
     # Reserved system variables. The generator writes these itself, in the
@@ -284,22 +315,28 @@ class ExcelReader:
                     f"'{worksheet.title}'. The error was: {ex}"
                 )
 
+        # Run unconditionally. These used to be skipped entirely whenever any
+        # single row had errored, which bought nothing: a row that failed
+        # validation is still in `questionList` (only a blank FieldName is
+        # dropped), so the cross-row checks see the same data either way. What
+        # the gate did cost was a second wave -- an author fixing row errors
+        # got a clean-looking run, then hit a fresh wall of structural errors
+        # on the run where the last row error disappeared.
+        self._check_logic_field_names(worksheet.title)
+        self._check_skip_to_field_names(worksheet.title)
+        self._check_reserved_variable_reads(worksheet.title)
+        self._check_message_placeholders(worksheet.title)
+        self._check_required_max_characters(worksheet.title)
+        self._check_ranges(worksheet.title)
+        self._check_duplicate_columns(worksheet.title)
+        self._check_automatic_has_calculation(worksheet.title)
+        self._check_responses_are_answerable(worksheet.title)
+        self._check_preskip_does_not_test_itself(worksheet.title)
+        self._check_max_characters_is_meaningful(worksheet.title)
+        self._check_reserved_automatic_fields(worksheet.title)
+        self._check_comments_field_is_optional(worksheet.title)
         if not self.worksheetErrorsEncountered:
-            self._check_logic_field_names(worksheet.title)
-            self._check_skip_to_field_names(worksheet.title)
-            self._check_reserved_variable_reads(worksheet.title)
-            self._check_message_placeholders(worksheet.title)
-            self._check_required_max_characters(worksheet.title)
-            self._check_ranges(worksheet.title)
-            self._check_duplicate_columns(worksheet.title)
-            self._check_automatic_has_calculation(worksheet.title)
-            self._check_responses_are_answerable(worksheet.title)
-            self._check_preskip_does_not_test_itself(worksheet.title)
-            self._check_max_characters_is_meaningful(worksheet.title)
-            self._check_reserved_automatic_fields(worksheet.title)
-            self._check_comments_field_is_optional(worksheet.title)
-            if not self.worksheetErrorsEncountered:
-                self.logstring.append(f"No errors found in '{worksheet.title}'")
+            self.logstring.append(f"No errors found in '{worksheet.title}'")
 
         return self.questionList
 
@@ -342,7 +379,12 @@ class ExcelReader:
             self._error(f"ERROR - FieldName: {worksheet} has a FieldName that starts with a number: {fieldname}")
         elif " " in fieldname:
             self._error(f"ERROR - FieldName: {worksheet} has a FieldName that contains a space: {fieldname}")
-        elif any((not c.isalnum()) and c != "_" for c in fieldname):
+        elif not re.fullmatch(r"[A-Za-z0-9_]+", fieldname):
+            # Deliberately an ASCII character class rather than `str.isalnum`,
+            # which is Unicode-aware: `prenom` with an accent, and every other
+            # accented spelling the French dictionaries naturally reach for,
+            # passed every check here and then became an XML attribute and a
+            # SQLite column name.
             self._error(
                 "ERROR - FieldName: "
                 f"{worksheet} has an invalid FieldName.  Only letters, digits, and underscores are allowed: {fieldname}"
@@ -421,20 +463,29 @@ class ExcelReader:
                 "must be date when the QuestionType is 'date' or 'datetime'."
             )
 
-        if questiontype in {"radio", "checkbox"} and q.responseSourceType == ResponseSourceType.STATIC and q.responses:
+        # combobox belongs here as much as radio and checkbox do: the XML
+        # generator emits all three through the same `response.find(":")`
+        # split, so a combobox option written as `Yes` rather than `1:Yes`
+        # silently stored the value "Ye" -- valid XML, wrong code, on every
+        # answer to that question.
+        if (
+            questiontype in {"radio", "checkbox", "combobox"}
+            and q.responseSourceType == ResponseSourceType.STATIC
+            and q.responses
+        ):
             responses = self._split_lines(q.responses)
             seen: list[str] = []
             for response in responses:
                 index = response.find(":")
                 if index == -1:
                     self._error(
-                        f"ERROR - Responses: Invalid static radio button options for '{fieldname}' in table '{worksheet}'. "
+                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in table '{worksheet}'. "
                         f"Expected format 'number:Statement', found '{response}'."
                     )
                     return
                 if len(response.split(":")) != 2:
                     self._error(
-                        f"ERROR - Responses: Invalid static radio button options for '{fieldname}' in table '{worksheet}'. "
+                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in table '{worksheet}'. "
                         f"Expected format 'number:Statement', found '{response}'."
                     )
                     return
@@ -449,13 +500,13 @@ class ExcelReader:
                     return
                 if response.startswith(" "):
                     self._error(
-                        f"ERROR - Responses: Invalid static radio button options for '{fieldname}' in table '{worksheet}'. "
+                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in table '{worksheet}'. "
                         "Please remove leading spaces."
                     )
                     return
                 if ": " in response:
                     self._error(
-                        f"ERROR - Responses: Invalid static radio button options for '{fieldname}' in table '{worksheet}'. "
+                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in table '{worksheet}'. "
                         "Please remove space after the colon (:) for static responses."
                     )
                     return
@@ -790,6 +841,22 @@ class ExcelReader:
         the question cannot be answered at all.
         """
         for question in self.questionList:
+            # A range on a selection question is always a mistake, and a
+            # silent one: the generator writes <numeric_check> for any
+            # question whose LowerRange is set (xml_generator only excludes
+            # 'date'), so a LowerRange left behind on a copy-pasted checkbox
+            # row makes every option fail validation and the question
+            # unanswerable in the field.
+            if question.questionType in self.SELECTION_QUESTION_TYPES:
+                if question.lowerRange != "-9" or question.upperRange != "-9":
+                    self._error(
+                        f"ERROR - Range: In worksheet '{worksheet}', FieldName "
+                        f"'{question.fieldName}' is a '{question.questionType}' question with a "
+                        "LowerRange or UpperRange. A range applies to a typed number, not to a "
+                        "list of options, and leaves the question unanswerable. Clear both."
+                    )
+                continue
+
             if question.questionType not in {"text", "date"}:
                 continue
 
@@ -967,6 +1034,35 @@ class ExcelReader:
                 "Check for empty rows at the end of the spreadsheet and delete them."
             )
 
+    def _unsupported_filter_operator(self, value: str, matched_operator: str | None) -> str | None:
+        """The operator-shaped text left stranded in a filter's value, if any.
+
+        Only ever inspects the value, never rewrites it: a filter value may
+        legitimately contain spaces (`filter:district North West` means
+        `district = 'North West'`), so the test is on the *leading* token
+        alone.
+        """
+        if not value:
+            return None
+
+        if value[0] in self.OPERATOR_LEAD_CHARACTERS:
+            # e.g. `x =< 5`, where the regex matched `=` and left `< 5`.
+            stranded = value[: len(value) - len(value.lstrip(self.OPERATOR_LEAD_CHARACTERS))]
+            return f"{matched_operator.strip()}{stranded}" if matched_operator else stranded
+
+        # Word operators are only a possibility when the regex found no
+        # operator at all -- `in`/`not in` would already have matched.
+        if matched_operator:
+            return None
+
+        tokens = value.split()
+        for word_count in (3, 2, 1):
+            if len(tokens) > word_count:
+                candidate = " ".join(tokens[:word_count]).lower()
+                if candidate in self.UNSUPPORTED_FILTER_OPERATORS:
+                    return " ".join(tokens[:word_count])
+        return None
+
     def _parse_operator(self, op: str) -> str:
         # Collapse "NOT  IN" and similar spellings to a single canonical form
         op = " ".join(op.split()).lower() if op else "="
@@ -1022,13 +1118,26 @@ class ExcelReader:
             elif key == "filter":
                 match = self.FILTER_MATCH_RE.match(value)
                 if match:
-                    question.responseFilters.append(
-                        Filter(
-                            column=match.group(1).strip(),
-                            operator=self._parse_operator(match.group(2) if match.group(2) else "="),
-                            value=match.group(3).strip(),
-                        )
+                    filter_value = match.group(3).strip()
+                    bad_operator = self._unsupported_filter_operator(
+                        filter_value, matched_operator=match.group(2)
                     )
+                    if bad_operator:
+                        self._error(
+                            f"ERROR - Responses: Unsupported filter operator '{bad_operator}' for FieldName "
+                            f"'{fieldname}' in worksheet '{worksheet}': '{value}'. "
+                            "Supported operators are =, !=, <>, <, <=, >, >=, in and not in. "
+                            "Without one of those the whole phrase is taken as the value to match, "
+                            "so the response list comes back empty at interview time."
+                        )
+                    else:
+                        question.responseFilters.append(
+                            Filter(
+                                column=match.group(1).strip(),
+                                operator=self._parse_operator(match.group(2) if match.group(2) else "="),
+                                value=filter_value,
+                            )
+                        )
                 else:
                     self._error(
                         f"ERROR - Responses: Invalid filter format for FieldName '{fieldname}' in worksheet '{worksheet}': "

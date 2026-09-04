@@ -746,3 +746,223 @@ class FieldNameMessageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ComboboxStaticResponsesTests(unittest.TestCase):
+    """A combobox's static options are split on ':' exactly as a radio's are.
+
+    xml_generator emits radio, checkbox and combobox through the same
+    `response.find(":")` split, but only radio and checkbox were format-checked
+    -- so `Yes` on a combobox stored the value "Ye" (find returns -1, and
+    `response[:-1]` is the whole string minus its last character). Valid XML,
+    wrong code, on every answer to that question.
+    """
+
+    def test_a_combobox_option_without_a_colon_is_rejected(self):
+        reader = read([row("consent", "combobox", "integer", responses="Yes\nNo")])
+
+        self.assertTrue(
+            any("Invalid static combobox options" in e for e in errors(reader)),
+            errors(reader),
+        )
+
+    def test_a_correctly_formatted_combobox_is_accepted(self):
+        reader = read([row("consent", "combobox", "integer", responses="1:Yes\n2:No")])
+
+        self.assertEqual(errors(reader), [])
+
+    def test_the_message_names_the_question_type_it_is_talking_about(self):
+        # It used to say "radio button options" whatever the question was.
+        reader = read([row("consent", "checkbox", "text", responses="Yes")])
+
+        self.assertTrue(
+            any("Invalid static checkbox options" in e for e in errors(reader)),
+            errors(reader),
+        )
+
+    def test_duplicate_codes_are_caught_on_a_combobox_too(self):
+        reader = read([row("consent", "combobox", "integer", responses="1:Yes\n1:No")])
+
+        self.assertTrue(any("has duplicates" in e for e in errors(reader)), errors(reader))
+
+
+class RangeOnSelectionQuestionTests(unittest.TestCase):
+    """A LowerRange left on a selection question makes it unanswerable.
+
+    xml_generator writes <numeric_check> for any question whose LowerRange is
+    set (it only excludes 'date'), so a range copied onto a radio row is
+    emitted and then rejects every option code the interviewer can pick.
+    _check_ranges only ever looked at 'text' and 'date' questions.
+    """
+
+    def test_a_range_on_a_radio_is_rejected(self):
+        reader = read([
+            row("sex", "radio", "integer", responses="1:Male\n2:Female", lower="1", upper="2")
+        ])
+
+        self.assertTrue(
+            any("is a 'radio' question with a" in e for e in errors(reader)),
+            errors(reader),
+        )
+
+    def test_a_half_set_range_on_a_checkbox_is_rejected_too(self):
+        # The worse half: the generator writes the blank UpperRange as
+        # maxvalue='-9', so every value above -9 fails.
+        reader = read([
+            row("symptoms", "checkbox", "text", responses="1:Fever\n2:Cough", lower="1")
+        ])
+
+        self.assertTrue(
+            any("LowerRange or UpperRange" in e for e in errors(reader)),
+            errors(reader),
+        )
+
+    def test_a_combobox_is_covered(self):
+        reader = read([
+            row("village", "combobox", "integer", responses="1:Kirembe", upper="99")
+        ])
+
+        self.assertTrue(
+            any("is a 'combobox' question with a" in e for e in errors(reader)),
+            errors(reader),
+        )
+
+    def test_a_selection_question_with_no_range_is_untouched(self):
+        reader = read([row("sex", "radio", "integer", responses="1:Male\n2:Female")])
+
+        self.assertEqual(errors(reader), [])
+
+    def test_a_typed_number_still_carries_its_range(self):
+        reader = read([numeric_row()])
+
+        self.assertEqual(errors(reader), [])
+
+
+class UnsupportedFilterOperatorTests(unittest.TestCase):
+    """An operator the filter grammar does not know must not become '='.
+
+    FILTER_MATCH_RE's operator group is optional, so with nothing recognised
+    the entire remainder becomes the value: `filter:region like North` parsed
+    as `region = 'like North'`, generated clean XML, and came back from the
+    device as an empty response list with nothing said at generation time.
+    """
+
+    @staticmethod
+    def combobox_with(filter_text):
+        return row(
+            "village",
+            "combobox",
+            "integer",
+            responses=(
+                "source:database\ntable:villages\n"
+                f"filter:{filter_text}\ndisplay:name\nvalue:code"
+            ),
+        )
+
+    def filter_errors(self, filter_text):
+        reader = read([self.combobox_with(filter_text)])
+        return [e for e in errors(reader) if "filter operator" in e]
+
+    def test_a_word_operator_is_named_rather_than_swallowed(self):
+        found = self.filter_errors("region like North")
+
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("'like'", found[0])
+
+    def test_contains_is_caught_even_though_skips_accept_it(self):
+        # 'contains' is a legal skip operator, which is exactly why an author
+        # reaches for it here.
+        self.assertTrue(self.filter_errors("region contains North"))
+
+    def test_a_multi_word_operator_is_caught(self):
+        found = self.filter_errors("region is not null")
+
+        self.assertTrue(found)
+        self.assertIn("'is not'", found[0])
+
+    def test_a_mistyped_symbolic_operator_is_caught(self):
+        # The regex matches the '=' and strands the '<' at the front of the
+        # value, so the filter silently became `district = '< 5'`.
+        found = self.filter_errors("district =< 5")
+
+        self.assertTrue(found)
+        self.assertIn("=<", found[0])
+
+    def test_the_message_lists_the_operators_that_do_work(self):
+        found = self.filter_errors("region like North")
+
+        self.assertIn("in and not in", found[0])
+
+    def test_a_legitimate_multi_word_value_is_still_accepted(self):
+        # `district North West` means district = 'North West'. The operator is
+        # optional by design, so only the leading token may be inspected.
+        self.assertEqual(self.filter_errors("district North West"), [])
+
+    def test_every_supported_operator_still_parses(self):
+        for supported in ["= North", "!= North", "<> North", "in 1,2,3",
+                          "not in 1,2", "> 5", ">= 5", "< 5", "<= 5"]:
+            with self.subTest(operator=supported):
+                self.assertEqual(self.filter_errors(f"region {supported}"), [])
+
+
+class FieldNameCharacterTests(unittest.TestCase):
+    """FieldName is ASCII, because it becomes an XML attribute and a column.
+
+    `str.isalnum()` is Unicode-aware, so every accented spelling the French
+    dictionaries naturally reach for passed silently.
+    """
+
+    def test_an_accented_field_name_is_rejected(self):
+        reader = read([row("prénom", "text", "text")])
+
+        self.assertTrue(
+            any("Only letters, digits, and underscores" in e for e in errors(reader)),
+            errors(reader),
+        )
+
+    def test_a_field_name_with_a_cedilla_is_rejected(self):
+        reader = read([row("français", "text", "text")])
+
+        self.assertTrue(errors(reader))
+
+    def test_a_plain_ascii_field_name_is_still_accepted(self):
+        reader = read([row("prenom", "text", "text", maxchars="30")])
+
+        self.assertEqual(errors(reader), [])
+
+    def test_digits_and_underscores_are_still_accepted(self):
+        reader = read([row("net_brand_2", "text", "text", maxchars="30")])
+
+        self.assertEqual(errors(reader), [])
+
+    def test_a_space_still_gets_its_own_more_specific_message(self):
+        reader = read([row("first name", "text", "text")])
+
+        self.assertTrue(any("contains a space" in e for e in errors(reader)), errors(reader))
+
+
+class CrossRowChecksRunRegardlessTests(unittest.TestCase):
+    """A row-level error no longer suppresses the structural checks.
+
+    The offending row is still in questionList (only a blank FieldName is
+    dropped), so the cross-row checks see the same data either way -- the gate
+    only delayed their output to a later run.
+    """
+
+    def test_a_row_error_and_a_structural_error_are_reported_together(self):
+        reader = read([
+            # Row error: blank QuestionText.
+            row("age", "text", "text_integer", text="", maxchars="3", lower="0", upper="120"),
+            # Structural error: a skip pointing at a field that does not exist.
+            row("sex", "radio", "integer", responses="1:Male\n2:Female",
+                skip="postskip: if sex = 1, skip to nowhere"),
+        ])
+
+        found = errors(reader)
+        self.assertTrue(any("blank QuestionText" in e for e in found), found)
+        self.assertTrue(any("nowhere" in e for e in found), found)
+
+    def test_a_clean_worksheet_still_says_so(self):
+        reader = read([numeric_row()])
+
+        self.assertIn("No errors found in 'demo_dd'", reader.logstring)
