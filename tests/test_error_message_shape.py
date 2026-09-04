@@ -27,6 +27,7 @@ import inspect
 import re
 import unittest
 
+import calculation_parser
 import excel_reader
 
 
@@ -39,7 +40,7 @@ import excel_reader
 # nobody scans. That guard is the whole reason this list is explicit rather
 # than a glob: a module missing from it fails loudly, a glob would quietly
 # absorb whatever it found.
-SCANNED_MODULES = (excel_reader,)
+SCANNED_MODULES = (excel_reader, calculation_parser)
 
 
 # `ERROR - Category: `, where the category may be an f-string placeholder --
