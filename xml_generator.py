@@ -13,6 +13,7 @@ from models import (
     ResponseSourceType,
 )
 from skip_parser import ParsedSkip, parse_skip, split_skip_lines
+from cell_text import split_cell_lines
 
 # The Windows app writes files with .NET StreamWriter on Windows: every WriteLine
 # ends with CRLF, and WriteLine("\n") emits "\n\r\n". NEWLINE/BLANK_LINE reproduce
@@ -196,7 +197,7 @@ class XmlGenerator:
                         wl(f"\t\t\t<not_in_list value='{_esc_attr(q.responseNotInListValue)}'{label_attr}/>")
 
                     if q.responseSourceType == ResponseSourceType.STATIC:
-                        responses = [r for r in re.split(r"\r\n|\n|\r", q.responses) if r]
+                        responses = split_cell_lines(q.responses)
                         if len(responses) == 0:
                             wl("\t\t\t<response></response>")
                         else:
@@ -370,6 +371,19 @@ class XmlGenerator:
             wl(f"\t\t<calculation type='date_part' field='{field}' unit='{unit}' />")
         elif q.calculationType == CalculationType.TIMESTAMP:
             wl("\t\t<calculation type='timestamp' preserve='true' />")
+        else:
+            # There was no final branch here at all, so a CalculationType this
+            # chain does not know about produced NO <calculation> element and
+            # reported success -- the question would validate clean, ship, and
+            # simply never compute anything in the field. That is the same
+            # failure shape as C4's vanished skip element, and the same answer:
+            # state the invariant rather than imply it. Reaching here means a
+            # type was added to the enum and to the validator but not to this
+            # emitter (see tests/test_calculation_registry.py).
+            raise ValueError(
+                f"No XML emitter for calculation type {q.calculationType!r} on field "
+                f"'{q.fieldName}'. Add a branch here, or the calculation is silently dropped."
+            )
 
     def _generate_calculation_part(self, wl, part: CalculationPart, indent_level: int) -> None:
         indent = "\t" * indent_level

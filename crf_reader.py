@@ -5,6 +5,7 @@ import json
 from openpyxl.worksheet.worksheet import Worksheet
 
 from models import Crf, IdConfig, IdConfigField
+from cell_text import cell_trim
 
 # The order is load-bearing: every field below is read by column *position*,
 # so inserting a column in the sheet shifts everything after it. Before the
@@ -43,7 +44,7 @@ class CrfReader:
         """
         errors: list[str] = []
 
-        headers = [_cell_trim(worksheet, 1, i + 1).lower() for i in range(NUMBER_OF_CRFS_COLUMNS)]
+        headers = [cell_trim(worksheet, 1, i + 1).lower() for i in range(NUMBER_OF_CRFS_COLUMNS)]
         if headers != CRFS_COLUMN_NAMES:
             errors.append(
                 "ERROR - crfs: The header names in the 'crfs' worksheet are incorrect. "
@@ -57,7 +58,7 @@ class CrfReader:
 
         crfs: list[Crf] = []
         for row_idx in range(2, worksheet.max_row + 1):
-            cells = [_cell_trim(worksheet, row_idx, i + 1) for i in range(NUMBER_OF_CRFS_COLUMNS)]
+            cells = [cell_trim(worksheet, row_idx, i + 1) for i in range(NUMBER_OF_CRFS_COLUMNS)]
 
             # openpyxl counts a row that carries only formatting -- a border or
             # a fill, common at the bottom of a hand-maintained sheet -- toward
@@ -125,13 +126,6 @@ def _parse_idconfig(idconfig_json: str) -> IdConfig:
     )
 
 
-def _cell_trim(worksheet: Worksheet, row: int, col: int) -> str:
-    value = worksheet.cell(row=row, column=col).value
-    if value is None:
-        return ""
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value).strip()
 
 
 def _nullable_int(value: str) -> int | None:

@@ -90,6 +90,47 @@ class CalculationType(str, Enum):
     TIMESTAMP = "Timestamp"
 
 
+# The `calc:` word a data dictionary writes for each calculation type.
+#
+# One table, because the same set used to be enumerated three times over: this
+# mapping (as a dict built inline in excel_reader), the error message listing
+# the valid words, and the emitter's branch chain in xml_generator. Adding a
+# type meant editing four disconnected places, and nothing noticed when one was
+# missed -- a type with no alias is unreachable from a dictionary, and one the
+# emitter does not handle is silently dropped from the XML. The coverage tests
+# in tests/test_calculation_registry.py now assert all three agree.
+#
+# Deliberately NOT extended to cover what each type *requires*:
+# `_validate_calculation_fields` checks genuinely different things per type
+# (one field, two fields, a list length, a date format), and flattening that
+# into a table would either lose the specific message or need a callable per
+# entry, which is harder to read than the explicit chain it replaced.
+CALCULATION_ALIASES: dict[CalculationType, str] = {
+    CalculationType.QUERY: "query",
+    CalculationType.CASE: "case",
+    CalculationType.CONSTANT: "constant",
+    CalculationType.LOOKUP: "lookup",
+    CalculationType.MATH: "math",
+    CalculationType.CONCAT: "concat",
+    CalculationType.AGE_FROM_DATE: "age_from_date",
+    CalculationType.AGE_AT_DATE: "age_at_date",
+    CalculationType.DATE_OFFSET: "date_offset",
+    CalculationType.DATE_DIFF: "date_diff",
+    CalculationType.DATE_PART: "date_part",
+    CalculationType.TIMESTAMP: "timestamp",
+}
+
+CALCULATION_TYPE_BY_ALIAS: dict[str, CalculationType] = {
+    alias: calculation_type for calculation_type, alias in CALCULATION_ALIASES.items()
+}
+
+
+def calculation_alias_list() -> str:
+    """The valid `calc:` words, for an error message. Derived, never retyped."""
+    aliases = list(CALCULATION_TYPE_BY_ALIAS)
+    return ", ".join(f"'{a}'" for a in aliases[:-1]) + f", or '{aliases[-1]}'"
+
+
 @dataclass
 class Filter:
     column: str

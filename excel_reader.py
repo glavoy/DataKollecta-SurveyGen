@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from openpyxl.worksheet.worksheet import Worksheet
 
 from models import (
+    CALCULATION_TYPE_BY_ALIAS,
     KNOWN_AUTOMATIC_FIELDS,
     RESERVED_SYSTEM_FIELDS,
     TRAILING_SYSTEM_FIELD_NAMES,
+    calculation_alias_list,
     CalculationParameter,
     CalculationPart,
     CalculationType,
@@ -17,6 +18,7 @@ from models import (
     Question,
     ResponseSourceType,
 )
+from cell_text import cell_raw, cell_trim, split_cell_lines, to_str
 from skip_parser import parse_skip, split_skip_lines
 
 
@@ -340,23 +342,18 @@ class ExcelReader:
 
         return self.questionList
 
-    @staticmethod
-    def _split_lines(text: str) -> list[str]:
-        return [line for line in re.split(r"\r\n|\n|\r", text) if line]
-
-    @staticmethod
-    def _to_str(value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, float) and value.is_integer():
-            return str(int(value))
-        return str(value)
+    # Thin wrappers over cell_text, kept as methods because they are called
+    # ~200 times in this file and the shorter name reads better at the call
+    # site. The implementations are shared with crf_reader and xml_generator
+    # so the same cell cannot be read two different ways.
+    _split_lines = staticmethod(split_cell_lines)
+    _to_str = staticmethod(to_str)
 
     def _get_cell_trim(self, ws: Worksheet, row: int, col: int) -> str:
-        return self._to_str(ws.cell(row=row, column=col).value).strip()
+        return cell_trim(ws, row, col)
 
     def _get_cell_raw(self, ws: Worksheet, row: int, col: int) -> str:
-        return self._to_str(ws.cell(row=row, column=col).value)
+        return cell_raw(ws, row, col)
 
     @staticmethod
     def _is_cell_merged(ws: Worksheet, row: int, col: int) -> bool:
@@ -578,7 +575,7 @@ class ExcelReader:
         # would otherwise have treated as set.
         if value not in {"True", "TRUE", "False", "FALSE"}:
             self._error(
-                f"ERROR: - {button_name} FieldName '{fieldname}' in worksheet '{worksheet}' "
+                f"ERROR - {button_name}: FieldName '{fieldname}' in worksheet '{worksheet}' "
                 f"has an invalid value for '{button_name}': {value}"
             )
 
@@ -1194,26 +1191,16 @@ class ExcelReader:
 
             if key == "calc":
                 current_calc = value.lower()
-                mapping = {
-                    "query": CalculationType.QUERY,
-                    "case": CalculationType.CASE,
-                    "constant": CalculationType.CONSTANT,
-                    "lookup": CalculationType.LOOKUP,
-                    "math": CalculationType.MATH,
-                    "concat": CalculationType.CONCAT,
-                    "age_from_date": CalculationType.AGE_FROM_DATE,
-                    "age_at_date": CalculationType.AGE_AT_DATE,
-                    "date_offset": CalculationType.DATE_OFFSET,
-                    "date_diff": CalculationType.DATE_DIFF,
-                    "date_part": CalculationType.DATE_PART,
-                    "timestamp": CalculationType.TIMESTAMP,
-                }
-                if current_calc in mapping:
-                    question.calculationType = mapping[current_calc]
+                # One shared table (models.CALCULATION_ALIASES), and the valid
+                # list in the message derived from it -- the dict and the
+                # hand-written list of the same twelve words used to be two
+                # separate places to keep in step.
+                if current_calc in CALCULATION_TYPE_BY_ALIAS:
+                    question.calculationType = CALCULATION_TYPE_BY_ALIAS[current_calc]
                 else:
                     self._error(
                         f"ERROR - Calculation: Invalid calculation type '{value}' for FieldName '{fieldname}' in worksheet '{worksheet}'. "
-                        "Must be 'query', 'case', 'constant', 'lookup', 'math', 'concat', 'age_from_date', 'age_at_date', 'date_offset', 'date_diff', 'date_part', or 'timestamp'."
+                        f"Must be {calculation_alias_list()}."
                     )
             elif key == "sql":
                 question.calculationQuerySql = value
