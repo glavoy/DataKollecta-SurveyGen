@@ -175,9 +175,21 @@ class SurveyGenProcessor:
             xml_files: list[str] = []
 
             if not self.errorsEncountered:
+                tables_with_parent = {
+                    crf.tablename
+                    for crf in crfs
+                    if crf.tablename and (crf.parenttable or "").strip()
+                }
+
                 for ws_name, qlist in self.question_list_cache.items():
                     xml_generator = XmlGenerator()
-                    xml_path = xml_generator.write_xml(ws_name, qlist, output_path)
+                    table = ws_name.replace("_dd", "").replace("_xml", "")
+                    xml_path = xml_generator.write_xml(
+                        ws_name,
+                        qlist,
+                        output_path,
+                        has_parent=table in tables_with_parent,
+                    )
                     self.logstring.extend(xml_generator.logstring)
                     self.generated_files.append(xml_path)
 

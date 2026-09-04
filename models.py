@@ -40,8 +40,30 @@ TRAILING_SYSTEM_FIELD_NAMES: frozenset[str] = frozenset(
     name for name, _ in TRAILING_SYSTEM_FIELDS
 )
 
+# Written only onto a form that declares a `parenttable`, immediately after
+# the record's own `uniqueid`. It carries the parent record's `uniqueid`, so a
+# child is tied to its parent by a value nothing can edit.
+#
+# The business key (`hhid`) stays the human-readable one, but it is built from
+# typed answers -- so an interviewer correcting a mistyped household number
+# changes it, and any analysis joining on it has to survive that. A UUID
+# cannot be retyped, so it cannot drift.
+#
+# Injected rather than declared, unlike KNOWN_AUTOMATIC_FIELDS below. Two
+# reasons. It is not a survey-design choice: it follows entirely from
+# `crfs.parenttable`, which this tool already reads and already checks the
+# existence of, so requiring an author to remember a row buys nothing and
+# forgetting one silently loses the join key -- the whole point of the field.
+# And the only reason yy/doy/mm/dd/yyyy have to be declared is *position*:
+# they may need to sit immediately before the idconfig field that consumes
+# them, which no generator can infer. Nothing consumes this one, so it has no
+# position to get right.
+PARENT_LINK_FIELD: tuple[str, str] = ("parent_uniqueid", "text")
+
 RESERVED_SYSTEM_FIELDS: frozenset[str] = (
-    LEADING_SYSTEM_FIELD_NAMES | TRAILING_SYSTEM_FIELD_NAMES
+    LEADING_SYSTEM_FIELD_NAMES
+    | TRAILING_SYSTEM_FIELD_NAMES
+    | frozenset({PARENT_LINK_FIELD[0]})
 )
 
 # Unlike RESERVED_SYSTEM_FIELDS, these are NOT auto-injected -- a dictionary

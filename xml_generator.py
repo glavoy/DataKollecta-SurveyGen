@@ -5,6 +5,7 @@ from pathlib import Path
 
 from models import (
     LEADING_SYSTEM_FIELDS,
+    PARENT_LINK_FIELD,
     RESERVED_SYSTEM_FIELDS,
     TRAILING_SYSTEM_FIELDS,
     CalculationPart,
@@ -82,7 +83,13 @@ class XmlGenerator:
     def __init__(self) -> None:
         self.logstring: list[str] = []
 
-    def write_xml(self, worksheet_name: str, question_list: list[Question], xml_path: Path) -> Path:
+    def write_xml(
+        self,
+        worksheet_name: str,
+        question_list: list[Question],
+        xml_path: Path,
+        has_parent: bool = False,
+    ) -> Path:
         if worksheet_name.endswith("_dd"):
             xml_name = worksheet_name[:-3]
         else:
@@ -254,6 +261,12 @@ class XmlGenerator:
             # screen, so anything after it is never computed.
             for fieldname, fieldtype in TRAILING_SYSTEM_FIELDS:
                 write_system_question(fieldname, fieldtype)
+
+            # Only on a form that declares a parent, and after `uniqueid` so
+            # the pair reads together. Its value is carried in by the app when
+            # the child is created, not computed here.
+            if has_parent:
+                write_system_question(*PARENT_LINK_FIELD)
 
             wl("\t<question type = 'information' fieldname = 'end_of_questions' fieldtype = 'n/a'>")
             wl("\t\t<text>Press the 'Finish' button to save the data.</text >")

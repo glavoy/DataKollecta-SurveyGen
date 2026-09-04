@@ -4,7 +4,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from excel_reader import ExcelReader
-from models import LEADING_SYSTEM_FIELDS, TRAILING_SYSTEM_FIELDS
+from models import (
+    LEADING_SYSTEM_FIELDS,
+    PARENT_LINK_FIELD,
+    RESERVED_SYSTEM_FIELDS,
+    TRAILING_SYSTEM_FIELDS,
+)
 from xml_generator import XmlGenerator
 
 from tests.test_dd_validations import HEADERS, numeric_row, row
@@ -16,7 +21,7 @@ LEADING = [name for name, _ in LEADING_SYSTEM_FIELDS]
 TRAILING = [name for name, _ in TRAILING_SYSTEM_FIELDS]
 
 
-def generate(rows, supplied=None):
+def generate(rows, supplied=None, has_parent=False):
     """Run a set of dictionary rows through the reader and the generator.
 
     `supplied` mirrors the crfs sheet's linking/increment/primary-key fields,
@@ -35,7 +40,9 @@ def generate(rows, supplied=None):
     assert not reader.errorsEncountered, "\n".join(reader.logstring)
 
     with TemporaryDirectory() as tmp:
-        path = XmlGenerator().write_xml("demo_dd", questions, Path(tmp))
+        path = XmlGenerator().write_xml(
+            "demo_dd", questions, Path(tmp), has_parent=has_parent
+        )
         return path.read_text(encoding="utf-8"), reader
 
 
@@ -175,3 +182,69 @@ class OtherAutomaticFieldsAreUntouchedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParentLinkFieldTests(unittest.TestCase):
+    """`parent_uniqueid` ties a child to its parent by a value nothing edits.
+
+    The business key (hhid) is built from typed answers, so an interviewer
+    correcting a mistyped household number changes it. A UUID cannot be
+    retyped, so a join on it cannot drift.
+    """
+
+    def test_it_is_written_on_a_form_with_a_parent(self):
+        xml, _ = generate([numeric_row()], has_parent=True)
+
+        self.assertIn(PARENT_LINK_FIELD[0], field_order(xml))
+
+    def test_it_is_absent_from_a_form_with_no_parent(self):
+        # A base form has nothing to point at, so the column would only ever
+        # be null -- and a null join key is worse than none, because analysis
+        # then has to fall back to the business key anyway.
+        xml, _ = generate([numeric_row()], has_parent=False)
+
+        self.assertNotIn(PARENT_LINK_FIELD[0], field_order(xml))
+
+    def test_it_comes_after_uniqueid(self):
+        # Nothing consumes it, so position carries no meaning -- but sitting
+        # with the record's own uniqueid is what makes the pair legible.
+        names = field_order(generate([numeric_row()], has_parent=True)[0])
+
+        self.assertGreater(
+            names.index(PARENT_LINK_FIELD[0]), names.index("uniqueid")
+        )
+
+    def test_it_stays_ahead_of_the_end_of_survey_screen(self):
+        # Navigation stops on that screen, so anything after it is never
+        # reached and would be saved empty.
+        names = field_order(generate([numeric_row()], has_parent=True)[0])
+
+        self.assertLess(
+            names.index(PARENT_LINK_FIELD[0]), names.index("end_of_questions")
+        )
+
+    def test_a_declared_row_is_dropped_rather_than_duplicated(self):
+        # It is reserved, so a dictionary that declares it anyway must not end
+        # up with two of them -- the same treatment uniqueid and swver get.
+        self.assertIn(PARENT_LINK_FIELD[0], RESERVED_SYSTEM_FIELDS)
+
+        xml, reader = generate(
+            [row(PARENT_LINK_FIELD[0], "automatic", "text", "Parent"), numeric_row()],
+            has_parent=True,
+        )
+
+        self.assertEqual(field_order(xml).count(PARENT_LINK_FIELD[0]), 1)
+        self.assertTrue(
+            any("reserved" in line.lower() for line in reader.logstring),
+            "\n".join(reader.logstring),
+        )
+
+    def test_a_declared_row_needs_no_calculation(self):
+        # Being reserved exempts it from "an automatic field with no
+        # calculation is never given a value" -- the app supplies it.
+        _, reader = generate(
+            [row(PARENT_LINK_FIELD[0], "automatic", "text", "Parent"), numeric_row()],
+            has_parent=True,
+        )
+
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
