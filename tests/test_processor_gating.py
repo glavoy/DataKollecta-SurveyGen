@@ -169,3 +169,334 @@ class CrfsErrorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def workbook_without_crfs(directory):
+    """A dictionary whose `crfs` sheet is missing entirely."""
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "enrollee_dd"
+    worksheet.append(HEADERS)
+    worksheet.append(numeric_row("age"))
+    path = Path(directory) / "no_crfs.xlsx"
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def workbook_with_sheets(directory, sheet_tables, crfs_rows):
+    """A dictionary whose `_dd` sheets and `crfs` rows can be set apart."""
+    workbook = Workbook()
+    first = True
+    for table in sheet_tables:
+        worksheet = workbook.active if first else workbook.create_sheet()
+        worksheet.title = f"{table}_dd"
+        worksheet.append(HEADERS)
+        worksheet.append(numeric_row("age"))
+        first = False
+
+    crfs = workbook.create_sheet("crfs")
+    crfs.append(list(CRFS_COLUMN_NAMES))
+    for r in crfs_rows:
+        crfs.append(r)
+
+    path = Path(directory) / "cross_check.xlsx"
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def crf_row(tablename, parenttable="", isbase=1):
+    return [10, tablename, tablename.title(), "subjid", "", isbase, "",
+            parenttable, "", "", "", "", "", "", ""]
+
+
+def log_of(processor):
+    return "\n".join(processor.logstring)
+
+
+class ConfigValidationTests(unittest.TestCase):
+    """A config key with no value produced a different unhelpful failure each
+    time, and config.json is gitignored -- so a fresh clone running the
+    documented `python main.py` hit one of them rather than a message naming
+    the file to copy."""
+
+    def build(self, tmp, **overrides):
+        out = Path(tmp) / "out"
+        config = config_for(workbook_file(tmp), out)
+        for key, value in overrides.items():
+            setattr(config, key, value)
+        return SurveyGenProcessor(config), out
+
+    def test_a_blank_excel_file_is_named_rather_than_crashing(self):
+        # `Path("")` is `Path(".")`, whose `.exists()` is True, so the
+        # missing-file check waved it through and `load_workbook(".")` then
+        # raised an unhandled exception.
+        with TemporaryDirectory() as tmp:
+            processor, _ = self.build(tmp, excelFile="")
+
+            self.assertEqual(1, run_quietly(processor))
+            self.assertIn("'excelFile' is missing or blank", log_of(processor))
+
+    def test_a_blank_survey_id_is_refused(self):
+        # It used to produce a file called ".zip".
+        with TemporaryDirectory() as tmp:
+            processor, _ = self.build(tmp, surveyId="")
+
+            self.assertEqual(1, run_quietly(processor))
+            self.assertIn("'surveyId' is missing or blank", log_of(processor))
+
+    def test_a_blank_database_name_is_refused(self):
+        with TemporaryDirectory() as tmp:
+            processor, _ = self.build(tmp, databaseName="")
+
+            self.assertEqual(1, run_quietly(processor))
+            self.assertIn("'databaseName' is missing or blank", log_of(processor))
+
+    def test_a_database_name_without_the_sqlite_suffix_is_refused(self):
+        with TemporaryDirectory() as tmp:
+            processor, _ = self.build(tmp, databaseName="test_database")
+
+            self.assertEqual(1, run_quietly(processor))
+            self.assertIn("does not end in '.sqlite'", log_of(processor))
+
+    def test_the_log_is_still_written_when_the_output_directory_does_not_exist(self):
+        # The config-error path runs before `run` creates outputPath.
+        with TemporaryDirectory() as tmp:
+            processor, out = self.build(tmp, surveyName="")
+
+            run_quietly(processor)
+            self.assertTrue((out / "gistlogfile.txt").exists())
+
+    def test_a_complete_config_is_untouched(self):
+        with TemporaryDirectory() as tmp:
+            processor, _ = self.build(tmp)
+
+            self.assertEqual(0, run_quietly(processor), log_of(processor))
+
+
+class DatabaseNameStabilityTests(unittest.TestCase):
+    """databaseName must not move between survey versions: the app opens one
+    database per databaseName, and a new one restarts the subject-ID counter.
+    """
+
+    def test_naming_the_database_after_the_survey_version_warns(self):
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            config = config_for(workbook_file(tmp), out)
+            config.databaseName = f"{config.surveyId}.sqlite"
+            processor = SurveyGenProcessor(config)
+
+            self.assertEqual(0, run_quietly(processor))
+            self.assertIn("will change every time the survey is revised", log_of(processor))
+
+    def test_a_database_named_after_the_study_does_not_warn(self):
+        # What both live configs do: the database keeps the original date
+        # while the surveyId moves on. That must stay silent.
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            config = config_for(workbook_file(tmp), out)
+            config.surveyId = "avert_bf_2026_08_31"
+            config.databaseName = "avert_bf_2026_07-13.sqlite"
+            processor = SurveyGenProcessor(config)
+
+            self.assertEqual(0, run_quietly(processor))
+            self.assertNotIn("WARNING - databaseName", log_of(processor))
+
+
+class CrfsCrossCheckTests(unittest.TestCase):
+    """The crfs rows and the `_dd` worksheets are two halves of one statement
+    and were never compared, so every mismatch was silent."""
+
+    def test_a_missing_crfs_worksheet_is_an_error(self):
+        # It used to yield `crfs: []` -- a survey with zero forms, reported as
+        # SUCCESS, and unusable on a device that lists forms from that table.
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            processor = SurveyGenProcessor(config_for(workbook_without_crfs(tmp), out))
+
+            self.assertEqual(1, run_quietly(processor))
+            self.assertIn("has no 'crfs' worksheet", log_of(processor))
+
+    def test_a_tablename_with_no_worksheet_is_an_error(self):
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            excel = workbook_with_sheets(tmp, ["enrollee"], [crf_row("enrolee")])
+            processor = SurveyGenProcessor(config_for(excel, out))
+
+            self.assertEqual(1, run_quietly(processor))
+            self.assertIn("no 'enrolee_dd' or 'enrolee_xml' worksheet", log_of(processor))
+
+    def test_a_worksheet_with_no_crfs_row_is_an_error(self):
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            excel = workbook_with_sheets(tmp, ["enrollee", "visit"], [crf_row("enrollee")])
+            processor = SurveyGenProcessor(config_for(excel, out))
+
+            self.assertEqual(1, run_quietly(processor))
+            self.assertIn("defines a form named 'visit', but no", log_of(processor))
+
+    def test_a_parenttable_naming_no_declared_form_is_an_error(self):
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            excel = workbook_with_sheets(
+                tmp, ["enrollee", "visit"],
+                [crf_row("enrollee"), crf_row("visit", parenttable="enrollees", isbase=0)],
+            )
+            processor = SurveyGenProcessor(config_for(excel, out))
+
+            self.assertEqual(1, run_quietly(processor))
+            self.assertIn("names 'enrollees' as its parenttable", log_of(processor))
+
+    def test_a_matching_pair_of_forms_is_accepted(self):
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            excel = workbook_with_sheets(
+                tmp, ["enrollee", "visit"],
+                [crf_row("enrollee"), crf_row("visit", parenttable="enrollee", isbase=0)],
+            )
+            processor = SurveyGenProcessor(config_for(excel, out))
+
+            self.assertEqual(0, run_quietly(processor), log_of(processor))
+
+
+def csv_workbook(directory, responses, table="enrollee"):
+    """One question whose responses come from somewhere outside the workbook."""
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = f"{table}_dd"
+    worksheet.append(HEADERS)
+    worksheet.append(
+        ["village", "combobox", "integer", "Which village?", "", responses,
+         "", "", "", "", "", "", "", ""]
+    )
+
+    crfs = workbook.create_sheet("crfs")
+    crfs.append(list(CRFS_COLUMN_NAMES))
+    crfs.append(crf_row(table))
+
+    path = Path(directory) / "csv_dictionary.xlsx"
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def csv_dir_with(directory, names):
+    csv_dir = Path(directory) / "csvs"
+    csv_dir.mkdir(exist_ok=True)
+    for name in names:
+        (csv_dir / name).write_text("code,name\n1,Kirembe\n")
+    return csv_dir
+
+
+def packaged_csvs(out, survey_id="test_survey"):
+    from zipfile import ZipFile
+
+    with ZipFile(out / f"{survey_id}.zip") as archive:
+        return sorted(n for n in archive.namelist() if n.endswith(".csv"))
+
+
+class CsvPackagingTests(unittest.TestCase):
+    """`_create_zip_file` used to glob every *.csv in `config.csvFiles`.
+
+    The live configs point that at a Dropbox study folder, so an unrelated
+    file sitting there -- an export of already-collected records, say -- was
+    bundled into the package and deployed to every tablet.
+    """
+
+    def build(self, tmp, responses, csv_names):
+        out = Path(tmp) / "out"
+        config = config_for(csv_workbook(tmp, responses), out)
+        config.csvFiles = str(csv_dir_with(tmp, csv_names))
+        return SurveyGenProcessor(config), out
+
+    def test_an_unreferenced_csv_is_left_out_of_the_package(self):
+        with TemporaryDirectory() as tmp:
+            processor, out = self.build(
+                tmp,
+                "source:csv\nfile:villages.csv\ndisplay:name\nvalue:code",
+                ["villages.csv", "hh_members_export_2026_08_30.csv"],
+            )
+
+            self.assertEqual(0, run_quietly(processor), log_of(processor))
+            self.assertEqual(["villages.csv"], packaged_csvs(out))
+
+    def test_what_was_left_out_is_named_in_the_log(self):
+        # A reference this cannot see must be visible rather than silent.
+        with TemporaryDirectory() as tmp:
+            processor, _ = self.build(
+                tmp,
+                "source:csv\nfile:villages.csv\ndisplay:name\nvalue:code",
+                ["villages.csv", "stray.csv"],
+            )
+            run_quietly(processor)
+
+            self.assertIn("Skipped (unreferenced): stray.csv", log_of(processor))
+
+    def test_a_referenced_file_that_is_absent_is_an_error(self):
+        # It used to ship a package whose combobox is simply empty on the
+        # device, with nothing on screen to explain it.
+        with TemporaryDirectory() as tmp:
+            processor, _ = self.build(
+                tmp,
+                "source:csv\nfile:villagess.csv\ndisplay:name\nvalue:code",
+                ["villages.csv"],
+            )
+
+            self.assertEqual(1, run_quietly(processor))
+            self.assertIn("sources its responses from 'villagess.csv'", log_of(processor))
+
+    def test_a_csv_backed_table_named_only_by_a_database_source_is_kept(self):
+        # DbService creates one table per imported CSV, so `table:villages`
+        # is a reference to villages.csv even with no `file:` line. Dropping
+        # it would break the survey -- the failure this selection must not
+        # cause.
+        with TemporaryDirectory() as tmp:
+            processor, out = self.build(
+                tmp,
+                "source:database\ntable:villages\ndisplay:name\nvalue:code",
+                ["villages.csv", "stray.csv"],
+            )
+
+            self.assertEqual(0, run_quietly(processor), log_of(processor))
+            self.assertEqual(["villages.csv"], packaged_csvs(out))
+
+    def test_a_csv_backed_table_named_only_in_calculation_sql_is_kept(self):
+        # Both live dictionaries do exactly this: villages.csv is read by a
+        # `<calculation type='query'>` that says `FROM villages`.
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            workbook = Workbook()
+            worksheet = workbook.active
+            worksheet.title = "enrollee_dd"
+            worksheet.append(HEADERS)
+            worksheet.append(
+                ["mrcname", "automatic", "text", "", "", 
+                 "calc:query\nsql:SELECT distinct mrcname FROM villages WHERE mrccode = @mrccode\n"
+                 "parameter:@mrccode=mrccode",
+                 "", "", "", "", "", "", "", ""]
+            )
+            worksheet.append(numeric_row("mrccode"))
+            crfs = workbook.create_sheet("crfs")
+            crfs.append(list(CRFS_COLUMN_NAMES))
+            crfs.append(crf_row("enrollee"))
+            excel = Path(tmp) / "sql_dictionary.xlsx"
+            workbook.save(excel)
+            workbook.close()
+
+            config = config_for(excel, out)
+            config.csvFiles = str(csv_dir_with(tmp, ["villages.csv", "stray.csv"]))
+            processor = SurveyGenProcessor(config)
+
+            self.assertEqual(0, run_quietly(processor), log_of(processor))
+            self.assertEqual(["villages.csv"], packaged_csvs(out))
+
+    def test_no_csv_reference_at_all_packages_nothing(self):
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            config = config_for(workbook_file(tmp), out)
+            config.csvFiles = str(csv_dir_with(tmp, ["stray.csv"]))
+            processor = SurveyGenProcessor(config)
+
+            self.assertEqual(0, run_quietly(processor), log_of(processor))
+            self.assertEqual([], packaged_csvs(out))

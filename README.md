@@ -154,9 +154,20 @@ On macOS/Linux, use forward-slash paths instead, e.g. `"excelFile": "/Users/you/
 | `databaseName` | SQLite database filename written to `survey_manifest.gistx`. **Never change it once data has been collected** | `"prism_css.sqlite"` |
 
 **Notes:**
-- The application creates a zip file containing all XML files, the survey_manifest.gistx file, and any CSV files used for dynamic responses
+- The application creates a zip file containing all XML files, the survey_manifest.gistx file, and the CSV files the survey actually references
+- **Only referenced CSVs are packaged.** `csvFiles` is a directory, and it used to be
+  globbed wholesale — so anything else sitting in it, including an export of collected
+  records, was bundled into the package and deployed to every tablet. A CSV is now kept
+  when a `file:` line names it, or when its name matches a table used by a
+  `source:database` response or by a calculation query (`FROM villages` is a reference to
+  `villages.csv`, because the app imports one table per CSV). Anything left out is listed
+  by name in the log, so a reference the tool cannot see is visible rather than silent.
+- A `file:` reference naming a CSV that is not in the directory is an **error**. It used
+  to ship a package whose combobox is simply empty in the field.
 - The log file (`gistlogfile.txt`) is written to the `outputPath` directory
 - The database name is read from `databaseName` in `config.json`
+- Every key in the table above is required. A missing one is reported by name rather than
+  producing a stray `.zip` or an unhandled traceback
 
 ---
 

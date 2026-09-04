@@ -9,6 +9,7 @@ from zipfile import ZipFile
 
 from openpyxl import Workbook
 
+from crf_reader import CRFS_COLUMN_NAMES
 from excel_reader import ExcelReader
 
 
@@ -104,6 +105,14 @@ class LogicCheckContainsTests(unittest.TestCase):
             worksheet = workbook.active
             worksheet.title = "symptoms_dd"
             self._add_questions(worksheet)
+
+            # A crfs sheet, because the processor now refuses a workbook
+            # without one -- the manifest would otherwise declare a survey
+            # with no forms.
+            crfs = workbook.create_sheet("crfs")
+            crfs.append(list(CRFS_COLUMN_NAMES))
+            crfs.append([10, "symptoms", "Symptoms", "subjid", "", 1, "", "", "", "", "", "", "", "", ""])
+
             workbook.save(workbook_path)
 
             config_path.write_text(
@@ -114,6 +123,7 @@ class LogicCheckContainsTests(unittest.TestCase):
                         "outputPath": str(output_path),
                         "surveyName": "Contains LogicCheck Test",
                         "surveyId": "contains_logic_check_test",
+                        "databaseName": "contains_logic_check_test_data.sqlite",
                     }
                 ),
                 encoding="utf-8",

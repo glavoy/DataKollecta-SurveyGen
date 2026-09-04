@@ -9,6 +9,7 @@ from zipfile import ZipFile
 
 from openpyxl import Workbook
 
+from crf_reader import CRFS_COLUMN_NAMES
 from excel_reader import ExcelReader
 
 
@@ -157,6 +158,13 @@ class ResponseFilterXmlTests(unittest.TestCase):
             worksheet = workbook.active
             worksheet.title = "nets_dd"
             worksheet.append(HEADERS)
+
+            # A crfs sheet, because the processor now refuses a workbook
+            # without one -- the manifest would otherwise declare a survey
+            # with no forms.
+            crfs = workbook.create_sheet("crfs")
+            crfs.append(list(CRFS_COLUMN_NAMES))
+            crfs.append([10, "nets", "Nets", "netid", "", 1, "", "", "", "", "", "", "", "", ""])
             worksheet.append(
                 _question_row(
                     "used_linenums",
@@ -192,6 +200,7 @@ class ResponseFilterXmlTests(unittest.TestCase):
                         "outputPath": str(output_path),
                         "surveyName": "Response Filter Test",
                         "surveyId": "response_filter_test",
+                        "databaseName": "response_filter_test_data.sqlite",
                     }
                 ),
                 encoding="utf-8",
