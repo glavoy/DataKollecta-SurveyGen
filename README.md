@@ -402,6 +402,7 @@ never need a `calc:` block, responses or validation:
 | `uniqueid` | a unique identifier generated for the record |
 | `swver` | the version of the app that collected the record |
 | `survey_id` | the identifier of the survey the record belongs to |
+| `parent_uniqueid` | the parent record's `uniqueid` — **only on a form that declares a `parenttable`** |
 
 **The generator writes these into every questionnaire itself**, in the positions where
 they record the right moment: `starttime` and `startdate` before the first question, and
@@ -420,6 +421,28 @@ when this happens. If you need a value of your own, use a different FieldName.
 **Not the same thing as `yyyy`/`yy`/`mm`/`dd`/`doy`**, below — those are automatic too, and
 the app computes them the same way, but you still have to declare them yourself; nothing
 writes them in for you.
+
+#### `parent_uniqueid` — the join key that cannot drift
+
+The one reserved variable that is **not** written onto every form. It appears on exactly
+the forms that declare a `parenttable`, holding that parent record's `uniqueid`.
+
+A child is otherwise tied to its parent only by the linking value — an `hhid` — which is
+built from typed answers. So an interviewer correcting a mistyped household number
+changes it, and anything joining on it has to survive that. A UUID cannot be retyped, so
+`parent_uniqueid` cannot drift: `hhid` stays the human-readable business key, and the
+join key becomes one no edit can break. The app fills it in when it creates the child,
+from the parent's own record.
+
+A base form does not get the column. It has nothing to point at, and a null join key is
+worse than none — analysis would fall back to the business key anyway.
+
+**Why this one is generated while `yyyy`/`yy`/`mm`/`dd`/`doy` must be declared.** The only
+reason those five need a row is *position*: one may have to sit immediately before the
+`idconfig` field that consumes it, which the generator cannot infer. Nothing consumes
+`parent_uniqueid`, so it has no position to get right — and generating it means
+forgetting a row cannot silently lose the join key, which is the entire point of the
+field.
 
 ---
 
@@ -1303,6 +1326,31 @@ This field is auto-calculated by the system
 This section explains how to set up the **`crfs`** worksheet in the Excel data dictionary so that the
 DataKollecta-SurveyGen app can generate a correct `survey_manifest.gistx`, and so the DataKollecta survey app
 administers your forms the way you expect.
+
+**Every field name a `crfs` row mentions is now checked against the form's real
+columns** — `primarykey`, `linkingfield`, `incrementfield`, `display_fields`,
+`repeat_count_field`, `entry_condition` and each `idconfig` field name. A typo used to
+produce a clean build and a manifest that was valid and wrong, and a misspelled
+`primarykey` additionally *suppressed* the "automatic field has no calculation" error for
+the misspelling. These are build errors now.
+
+One check is worth calling out because it is the precondition for something the app
+depends on: **`linkingfield` must exist on the parent as well as on the child.** The app
+creates each child table with a real
+`FOREIGN KEY (linkingfield) REFERENCES parenttable(linkingfield) ON UPDATE CASCADE`, so
+correcting a parent's key carries to its children rather than splitting a household
+across two ids — and that needs the column on both sides. If it is missing the app
+creates the table with no foreign key and only logs, which is why the error belongs here.
+
+`linkingfield` **need not be the parent's `primarykey`.** Linking on any column the
+parent actually has is fine — scenario C below links on `barcode` while the parent is
+keyed on `subjid` — because the app declares the uniqueness its foreign key needs over
+whichever columns children reference. Where a form has an `incrementfield`, though, the
+generator *warns* if `primarykey` is not `linkingfield,incrementfield`: the child counter
+groups siblings by `linkingfield`, so a primarykey built from anything else describes a
+different grouping than the one records are actually numbered by. See
+`DataKollecta/docs/CRFS_TABLE_CONFIGURATION.md` for the full list of constraints the app
+now derives from this worksheet.
 
 It covers **three distinct form scenarios**:
 
