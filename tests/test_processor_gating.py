@@ -19,7 +19,7 @@ from crf_reader import CRFS_COLUMN_NAMES
 from models import AppConfig
 from processor import SurveyGenProcessor
 
-from tests.test_dd_validations import HEADERS, numeric_row
+from tests.test_dd_validations import HEADERS, numeric_row, row
 
 
 def workbook_file(directory, crfs_headers=None, crfs_rows=None):
@@ -28,6 +28,11 @@ def workbook_file(directory, crfs_headers=None, crfs_rows=None):
     worksheet = workbook.active
     worksheet.title = "enrollee_dd"
     worksheet.append(HEADERS)
+    # The crfs row below names `subjid` as the primary key, so the sheet has
+    # to declare it -- both real dictionaries do. A primarykey naming no real
+    # column means the app never creates it, so getAllPrimaryKeys fails and
+    # the duplicate check silently does nothing; that is now a build error.
+    worksheet.append(row("subjid", "automatic", "text", "Subject ID"))
     worksheet.append(numeric_row("age"))
 
     crfs = workbook.create_sheet("crfs")
@@ -184,7 +189,7 @@ def workbook_without_crfs(directory):
     return path
 
 
-def workbook_with_sheets(directory, sheet_tables, crfs_rows):
+def workbook_with_sheets(directory, sheet_tables, crfs_rows, extra_rows=None):
     """A dictionary whose `_dd` sheets and `crfs` rows can be set apart."""
     workbook = Workbook()
     first = True
@@ -192,6 +197,18 @@ def workbook_with_sheets(directory, sheet_tables, crfs_rows):
         worksheet = workbook.active if first else workbook.create_sheet()
         worksheet.title = f"{table}_dd"
         worksheet.append(HEADERS)
+        # `extra_rows` defaults to a `subjid` row because the default crfs
+        # rows name it as their primarykey, which now has to be a real column
+        # on the form. A caller whose crfs rows name something else passes its
+        # own rows -- an orphaned automatic `subjid` would otherwise trip the
+        # separate "automatic field has no calculation" check, since only
+        # fields the crfs row supplies are exempt from it.
+        for extra in (
+            extra_rows
+            if extra_rows is not None
+            else [row("subjid", "automatic", "text", "Subject ID")]
+        ):
+            worksheet.append(extra)
         worksheet.append(numeric_row("age"))
         first = False
 
@@ -366,6 +383,9 @@ def csv_workbook(directory, responses, table="enrollee"):
     worksheet = workbook.active
     worksheet.title = f"{table}_dd"
     worksheet.append(HEADERS)
+    # primarykey has to name a real column on the form, and `crf_row` names
+    # `subjid`, so the sheet declares it alongside the question under test.
+    worksheet.append(row("subjid", "automatic", "text", "Subject ID"))
     worksheet.append(
         ["village", "combobox", "integer", "Which village?", "", responses,
          "", "", "", "", "", "", "", ""]
@@ -477,6 +497,8 @@ class CsvPackagingTests(unittest.TestCase):
                  "", "", "", "", "", "", "", ""]
             )
             worksheet.append(numeric_row("mrccode"))
+            # crf_row names `subjid` as the primarykey.
+            worksheet.append(row("subjid", "automatic", "text", "Subject ID"))
             crfs = workbook.create_sheet("crfs")
             crfs.append(list(CRFS_COLUMN_NAMES))
             crfs.append(crf_row("enrollee"))
@@ -500,3 +522,165 @@ class CsvPackagingTests(unittest.TestCase):
 
             self.assertEqual(0, run_quietly(processor), log_of(processor))
             self.assertEqual([], packaged_csvs(out))
+
+
+class CrfsFieldReferenceTests(unittest.TestCase):
+    """Every field name a crfs row mentions must name a real column.
+
+    `crf_reader` validates the header row and the idconfig JSON and nothing
+    else, so a typo in any of these cells used to produce a clean build and a
+    manifest that was valid and wrong. Worse, these same names are consumed as
+    an exemption list by `_supplied_auto_fields`, so a misspelled `primarykey`
+    both went unreported *and* suppressed the "automatic field has no
+    calculation" error for the misspelling while the real field still errored.
+    """
+
+    def build(self, tmp, sheets, crfs_rows, extra_rows=None):
+        out = Path(tmp) / "out"
+        path = workbook_with_sheets(tmp, sheets, crfs_rows, extra_rows)
+        processor = SurveyGenProcessor(config_for(path, out))
+        run_quietly(processor)
+        return processor
+
+    def test_a_primarykey_naming_no_real_column_is_an_error(self):
+        with TemporaryDirectory() as tmp:
+            processor = self.build(
+                tmp,
+                ["enrollee"],
+                [[10, "enrollee", "Enrollee", "nosuchfield", "", 1, "", "", "",
+                  "", "", "", "", "", ""]],
+            )
+
+            self.assertTrue(processor.errorsEncountered)
+            self.assertIn("names 'nosuchfield' as its primarykey", log_of(processor))
+
+    def test_an_incrementfield_naming_no_real_column_is_an_error(self):
+        with TemporaryDirectory() as tmp:
+            processor = self.build(
+                tmp,
+                ["enrollee", "visit"],
+                [
+                    [10, "enrollee", "Enrollee", "subjid", "", 1, "", "", "",
+                     "", "", "", "", "", ""],
+                    [20, "visit", "Visit", "subjid", "", 0, "subjid",
+                     "enrollee", "nosuchfield", "", "", "", "", "", ""],
+                ],
+            )
+
+            self.assertTrue(processor.errorsEncountered)
+            self.assertIn(
+                "names 'nosuchfield' as its incrementfield", log_of(processor)
+            )
+
+    def test_a_linkingfield_missing_from_the_parent_is_an_error(self):
+        # The foreign key's actual precondition, and the one rule neither this
+        # tool nor the portal checked. The app creates each child table with
+        # FOREIGN KEY (linkingfield) REFERENCES parent(linkingfield), so the
+        # column has to exist on both sides -- and both implementations only
+        # ever looked at the child's own fields.
+        with TemporaryDirectory() as tmp:
+            processor = self.build(
+                tmp,
+                ["enrollee", "visit"],
+                [
+                    [10, "enrollee", "Enrollee", "subjid", "", 1, "", "", "",
+                     "", "", "", "", "", ""],
+                    # `age` exists on both sheets, so the child-side check
+                    # passes; make the parent-side one fail instead.
+                    [20, "visit", "Visit", "subjid", "", 0, "visitcode",
+                     "enrollee", "", "", "", "", "", "", ""],
+                ],
+            )
+
+            self.assertTrue(processor.errorsEncountered)
+            self.assertIn("names 'visitcode' as its linkingfield", log_of(processor))
+
+    def test_a_repeat_count_field_missing_from_the_parent_is_an_error(self):
+        with TemporaryDirectory() as tmp:
+            processor = self.build(
+                tmp,
+                ["enrollee", "visit"],
+                [
+                    [10, "enrollee", "Enrollee", "subjid", "", 1, "", "", "",
+                     "", "", "", "", "", ""],
+                    [20, "visit", "Visit", "subjid", "", 0, "subjid",
+                     "enrollee", "", "", "nvisits", "", "", "", ""],
+                ],
+            )
+
+            self.assertTrue(processor.errorsEncountered)
+            self.assertIn(
+                "names 'nvisits' as its repeat_count_field", log_of(processor)
+            )
+
+    def test_an_entry_condition_on_an_unknown_parent_field_is_an_error(self):
+        with TemporaryDirectory() as tmp:
+            processor = self.build(
+                tmp,
+                ["enrollee", "visit"],
+                [
+                    [10, "enrollee", "Enrollee", "subjid", "", 1, "", "", "",
+                     "", "", "", "", "", ""],
+                    [20, "visit", "Visit", "subjid", "", 0, "subjid",
+                     "enrollee", "", "", "", "", "", "", "enrolled=1"],
+                ],
+            )
+
+            self.assertTrue(processor.errorsEncountered)
+            self.assertIn("entry_condition on 'enrolled'", log_of(processor))
+
+    def test_a_system_variable_is_a_known_field(self):
+        # The generator injects these at write time, so they are absent from
+        # the sheet but present in the table.
+        with TemporaryDirectory() as tmp:
+            processor = self.build(
+                tmp,
+                ["enrollee"],
+                [[10, "enrollee", "Enrollee", "uniqueid", "", 1, "", "", "",
+                  "", "", "", "", "", ""]],
+                extra_rows=[],
+            )
+
+            self.assertFalse(processor.errorsEncountered, log_of(processor))
+
+    def test_a_linking_field_need_not_be_the_parent_primary_key(self):
+        # AVERT's real shape: vaccination_status links to enrollee on
+        # `barcode` while enrollee is keyed on `subjid`. The app declares the
+        # uniqueness its foreign key needs over whichever columns children
+        # reference, so this must build clean.
+        with TemporaryDirectory() as tmp:
+            processor = self.build(
+                tmp,
+                ["enrollee", "visit"],
+                [
+                    # enrollee is keyed on `age` but linked to on `barcode`.
+                    [10, "enrollee", "Enrollee", "age", "", 1, "barcode", "",
+                     "", "", "", "", "", "", ""],
+                    [20, "visit", "Visit", "barcode", "", 0, "barcode",
+                     "enrollee", "", "", "", "", "", "", ""],
+                ],
+                extra_rows=[row("barcode", "text", "text", "Barcode", maxchars="13")],
+            )
+
+            self.assertFalse(processor.errorsEncountered, log_of(processor))
+
+    def test_a_primarykey_that_does_not_match_the_counter_only_warns(self):
+        # The child counter groups siblings by linkingfield, so a primarykey
+        # built from anything else describes a different grouping than the
+        # database enforces. Worth flagging -- but a real dictionary already
+        # surprised us on this shape, so it does not block a build.
+        with TemporaryDirectory() as tmp:
+            processor = self.build(
+                tmp,
+                ["enrollee", "visit"],
+                [
+                    [10, "enrollee", "Enrollee", "subjid", "", 1, "", "", "",
+                     "", "", "", "", "", ""],
+                    [20, "visit", "Visit", "subjid", "", 0, "subjid",
+                     "enrollee", "age", "", "", "", "", "", ""],
+                ],
+            )
+
+            self.assertFalse(processor.errorsEncountered, log_of(processor))
+            self.assertIn("WARNING - crfs: Form 'visit'", log_of(processor))
+            self.assertIn("subjid,age", log_of(processor))

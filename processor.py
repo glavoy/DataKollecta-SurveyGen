@@ -11,7 +11,14 @@ from openpyxl import load_workbook
 from crf_reader import CrfReader
 from excel_reader import ExcelReader
 from json_generator import JsonGenerator
-from models import AppConfig, Question, ResponseSourceType, SurveyManifest
+from models import (
+    KNOWN_AUTOMATIC_FIELDS,
+    RESERVED_SYSTEM_FIELDS,
+    AppConfig,
+    Question,
+    ResponseSourceType,
+    SurveyManifest,
+)
 from xml_generator import XmlGenerator
 
 
@@ -171,6 +178,10 @@ class SurveyGenProcessor:
                 self.question_list_cache[ws.title] = qlist
 
             self._check_csv_references()
+            # After the question lists exist: this needs each form's real
+            # field names, which _check_crfs_against_worksheets (run before
+            # the sheets are read) cannot see.
+            self._check_crfs_field_references(crfs)
 
             xml_files: list[str] = []
 
@@ -352,6 +363,143 @@ class SurveyGenProcessor:
                     "crfs row declares it. Its XML would be packaged and then never listed by the "
                     "app, which drives its questionnaire list from the crfs table."
                 )
+
+    def _check_crfs_field_references(self, crfs: list) -> None:
+        """Every field name a crfs row mentions must name a real column.
+
+        `crf_reader` validates the header row and the idconfig JSON and
+        nothing else, so until now a typo in any of these cells produced a
+        clean build and a manifest that was valid and wrong. Worse, these same
+        names are consumed as an exemption list by `_supplied_auto_fields`, so
+        a misspelled `primarykey` both went unreported *and* suppressed the
+        "automatic field has no calculation" error for the misspelling while
+        the real field still errored.
+
+        The app now creates each survey table with real constraints driven by
+        these cells -- a UNIQUE over what children reference, and
+        `FOREIGN KEY (linkingfield) REFERENCES parent(...) ON UPDATE CASCADE`.
+        On-device a bad cell means the constraint is silently absent
+        (`_syncSurveyTable` catches and logs), so the failure has to move
+        here.
+
+        The portal implements most of these rules already
+        (`src/lib/validation/rules/formManifest.ts` and `packageRules.ts`),
+        and its own source notes there was no SurveyGen equivalent. One rule
+        is new to both: `linkingfield` must exist on the **parent**. Both
+        implementations only ever checked the child's own fields, so the
+        actual precondition for a foreign key was verified nowhere.
+        """
+        if not crfs:
+            return
+
+        fields_by_table: dict[str, set[str]] = {}
+        for ws_title, qlist in self.question_list_cache.items():
+            table = ws_title.replace("_dd", "").replace("_xml", "")
+            # The generator injects the system variables at write time, so they
+            # are absent from the sheet but present in the table.
+            fields_by_table[table] = (
+                {q.fieldName.strip().lower() for q in qlist if q.fieldName}
+                | {name.lower() for name in RESERVED_SYSTEM_FIELDS}
+                | {name.lower() for name in KNOWN_AUTOMATIC_FIELDS}
+            )
+
+        def names(cell) -> list[str]:
+            return [part.strip() for part in (cell or "").split(",") if part.strip()]
+
+        def plain(name: str) -> str:
+            # display_fields may wrap a name as [[field]] to request its label.
+            stripped = name.strip()
+            if stripped.startswith("[[") and stripped.endswith("]]"):
+                stripped = stripped[2:-2]
+            return stripped.strip().lower()
+
+        for crf in crfs:
+            table = (crf.tablename or "").strip()
+            if not table or table not in fields_by_table:
+                # Reported by _check_crfs_against_worksheets.
+                continue
+            own = fields_by_table[table]
+
+            def check(cell, label: str, scope: set[str], scope_name: str) -> None:
+                for name in names(cell):
+                    if plain(name) not in scope:
+                        self._crfs_error(
+                            f"ERROR - crfs: Form '{table}' names '{name}' as its "
+                            f"{label}, but there is no such field on {scope_name}."
+                        )
+
+            check(crf.primarykey, "primarykey", own, f"'{table}'")
+            check(crf.incrementfield, "incrementfield", own, f"'{table}'")
+            check(crf.display_fields, "display_fields", own, f"'{table}'")
+            if crf.idconfig and crf.idconfig.fields:
+                check(
+                    ",".join(f.name for f in crf.idconfig.fields if f.name),
+                    "idconfig field",
+                    own,
+                    f"'{table}'",
+                )
+
+            parent = (crf.parenttable or "").strip()
+            if not parent:
+                continue
+            check(crf.linkingfield, "linkingfield", own, f"'{table}'")
+
+            parent_fields = fields_by_table.get(parent)
+            if parent_fields is None:
+                # Reported by _check_crfs_against_worksheets.
+                continue
+
+            # The foreign key's actual precondition, checked nowhere before
+            # this. The child is matched to its parent on this column, so it
+            # has to exist on both sides; if it does not, the app creates the
+            # table with no foreign key at all and only logs.
+            check(
+                crf.linkingfield,
+                "linkingfield",
+                parent_fields,
+                f"its parent '{parent}'",
+            )
+
+            check(
+                crf.repeat_count_field,
+                "repeat_count_field",
+                parent_fields,
+                f"its parent '{parent}'",
+            )
+
+            entry = (crf.entry_condition or "").strip()
+            if entry:
+                field = entry.split("=", 1)[0].strip()
+                if field and field.lower() not in parent_fields:
+                    self._crfs_error(
+                        f"ERROR - crfs: Form '{table}' has an entry_condition on "
+                        f"'{field}', but there is no such field on its parent "
+                        f"'{parent}'. No parent record could ever match it."
+                    )
+
+            # A warning, not an error. It is what makes the child counter
+            # unambiguous -- the counter groups siblings by `linkingfield`, so
+            # a primarykey built from anything else describes a different
+            # grouping than the one the database enforces. But a real
+            # dictionary already surprised us once here (AVERT links
+            # `vaccination_status` to `enrollee` on `barcode` while `enrollee`
+            # is keyed on `subjid`), so this flags a probable mistake rather
+            # than blocking a shape that may be deliberate.
+            increment = (crf.incrementfield or "").strip()
+            if increment:
+                expected = [plain(n) for n in names(crf.linkingfield)] + [
+                    increment.lower()
+                ]
+                actual = [plain(n) for n in names(crf.primarykey)]
+                if actual != expected:
+                    self.logstring.append(
+                        f"WARNING - crfs: Form '{table}' has primarykey "
+                        f"'{crf.primarykey}' but increments '{increment}' within "
+                        f"'{crf.linkingfield}'. The child counter groups siblings by "
+                        f"linkingfield, so a primarykey of "
+                        f"'{','.join(expected)}' is what matches how records are "
+                        "actually numbered."
+                    )
 
     def _crfs_error(self, message: str) -> None:
         """Log a crfs-level error under the same heading CrfReader uses."""

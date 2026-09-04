@@ -164,7 +164,9 @@ class ResponseFilterXmlTests(unittest.TestCase):
             # with no forms.
             crfs = workbook.create_sheet("crfs")
             crfs.append(list(CRFS_COLUMN_NAMES))
-            crfs.append([10, "nets", "Nets", "netid", "", 1, "", "", "", "", "", "", "", "", ""])
+            # primarykey has to name a real column on the form now, and
+            # `sleptunder` is what this sheet actually declares.
+            crfs.append([10, "nets", "Nets", "sleptunder", "", 1, "", "", "", "", "", "", "", "", ""])
             worksheet.append(
                 _question_row(
                     "used_linenums",

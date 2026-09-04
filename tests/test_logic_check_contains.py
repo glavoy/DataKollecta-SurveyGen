@@ -111,7 +111,9 @@ class LogicCheckContainsTests(unittest.TestCase):
             # with no forms.
             crfs = workbook.create_sheet("crfs")
             crfs.append(list(CRFS_COLUMN_NAMES))
-            crfs.append([10, "symptoms", "Symptoms", "subjid", "", 1, "", "", "", "", "", "", "", "", ""])
+            # primarykey has to name a real column on the form now, and
+            # `symptoms` is what this sheet actually declares.
+            crfs.append([10, "symptoms", "Symptoms", "symptoms", "", 1, "", "", "", "", "", "", "", "", ""])
 
             workbook.save(workbook_path)
 
