@@ -59,7 +59,7 @@ class CalculationParsingMixin:
 
     PARAMETER_RE = re.compile(r"^(@?\w+)\s*=\s*(\w+)$")
     # Alternatives are ordered longest-first for the same reason as
-    # FILTER_MATCH_RE in excel_reader; "does not contain" embeds its own \s+
+    # FILTER_MATCH_RE in response_parser; "does not contain" embeds its own \s+
     # since it is three words, not a single token like the other operators.
     WHEN_CONDITION_RE = re.compile(
         r"^(\w+)\s+(=|!=|<>|>=|<=|>|<|(?i:does\s+not\s+contain|contains))\s+(.+?)\s*=>\s*(.+)$"
