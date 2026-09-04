@@ -176,8 +176,8 @@ class ExcelReader:
                         self.optionalColumnIsLegacyNa = True
                     elif current_headers != self.COLUMN_NAMES:
                         self._error(
-                            "ERROR: The header names in the "
-                            f"{worksheet.title} are incorrect. Header names should be: "
+                            "ERROR - Header: The header names in worksheet "
+                            f"'{worksheet.title}' are incorrect. Header names should be: "
                             "FieldName, QuestionType, FieldType, QuestionText, MaxCharacters, "
                             "Responses, LowerRange, UpperRange, LogicCheck, DontKnow, Refuse, Optional, Skip, Comments "
                             "(a dictionary written before the Optional column was added may still say 'NA' there instead)"
@@ -344,8 +344,8 @@ class ExcelReader:
                 self.questionList.append(q)
             except Exception as ex:
                 self._error(
-                    f"ERROR: An unexpected error occurred while processing row {row_idx} in worksheet "
-                    f"'{worksheet.title}'. The error was: {ex}"
+                    f"ERROR - Row: An unexpected error occurred while processing row {row_idx} "
+                    f"in worksheet '{worksheet.title}'. The error was: {ex}"
                 )
 
         # Run unconditionally. These used to be skipped entirely whenever any
@@ -407,12 +407,12 @@ class ExcelReader:
 
     def _check_field_name(self, worksheet: str, fieldname: str) -> None:
         if not fieldname:
-            self._error(f"ERROR - FieldName: {worksheet} has an empty FieldName")
+            self._error(f"ERROR - FieldName: A row in worksheet '{worksheet}' has an empty FieldName")
             return
         if fieldname[0].isdigit():
-            self._error(f"ERROR - FieldName: {worksheet} has a FieldName that starts with a number: {fieldname}")
+            self._error(f"ERROR - FieldName: FieldName '{fieldname}' in worksheet '{worksheet}' starts with a number")
         elif " " in fieldname:
-            self._error(f"ERROR - FieldName: {worksheet} has a FieldName that contains a space: {fieldname}")
+            self._error(f"ERROR - FieldName: FieldName '{fieldname}' in worksheet '{worksheet}' contains a space")
         elif not re.fullmatch(r"[A-Za-z0-9_]+", fieldname):
             # Deliberately an ASCII character class rather than `str.isalnum`,
             # which is Unicode-aware: `prenom` with an accent, and every other
@@ -420,13 +420,13 @@ class ExcelReader:
             # passed every check here and then became an XML attribute and a
             # SQLite column name.
             self._error(
-                "ERROR - FieldName: "
-                f"{worksheet} has an invalid FieldName.  Only letters, digits, and underscores are allowed: {fieldname}"
+                f"ERROR - FieldName: FieldName '{fieldname}' in worksheet '{worksheet}' is invalid. "
+                "Only letters, digits, and underscores are allowed."
             )
         elif fieldname != fieldname.lower():
-            self._error(f"ERROR - FieldName: {worksheet} has a FieldName that is not all lowercase: {fieldname}")
+            self._error(f"ERROR - FieldName: FieldName '{fieldname}' in worksheet '{worksheet}' is not all lowercase")
         elif fieldname[0] == "_":
-            self._error(f"ERROR - FieldName: {worksheet} has a FieldName that starts with an underscore: {fieldname}")
+            self._error(f"ERROR - FieldName: FieldName '{fieldname}' in worksheet '{worksheet}' starts with an underscore")
         elif fieldname.lower() == "end":
             # Reserved as the Skip target sentinel meaning "end of form" (see
             # `_check_skip_to_field_names`). Not part of RESERVED_SYSTEM_FIELDS
@@ -436,8 +436,9 @@ class ExcelReader:
             # unable to skip to it by name (it never gets that far -- the
             # sentinel is checked before any fieldname lookup).
             self._error(
-                f"ERROR - FieldName: {worksheet} uses 'end', which is reserved as the "
-                "Skip target meaning 'end of form'. Choose a different FieldName."
+                f"ERROR - FieldName: FieldName '{fieldname}' in worksheet '{worksheet}' uses 'end', "
+                "which is reserved as the Skip target meaning 'end of form'. "
+                "Choose a different FieldName."
             )
 
     def _check_max_chars_value(self, worksheet: str, max_chars: str, fieldname: str) -> None:
@@ -463,37 +464,37 @@ class ExcelReader:
         if questiontype not in self.VALID_QUESTION_TYPES:
             self._error(
                 f"ERROR - QuestionType: The QuestionType {questiontype} for FieldName '{fieldname}' "
-                f"in table '{worksheet}' is not among the predefined list."
+                f"in worksheet '{worksheet}' is not among the predefined list."
             )
 
         if fieldtype not in self.VALID_FIELD_TYPES:
             self._error(
-                f"ERROR - FieldType: The FieldType '{fieldtype}' for FieldName '{fieldname}' in table '{worksheet}' "
+                f"ERROR - FieldType: The FieldType '{fieldtype}' for FieldName '{fieldname}' in worksheet '{worksheet}' "
                 "is not among the predefined list."
             )
 
         if questiontype == "text" and fieldtype not in self.TYPED_FIELD_TYPES:
             self._error(
-                f"ERROR - FieldType: The FieldType '{fieldtype}' for FieldName '{fieldname}' in table "
-                f"'{worksheet}' cannot be used with the QuestionType 'text'. Use one of: "
+                f"ERROR - FieldType: The FieldType '{fieldtype}' for FieldName '{fieldname}' "
+                f"in worksheet '{worksheet}' cannot be used with the QuestionType 'text'. Use one of: "
                 f"{', '.join(sorted(self.TYPED_FIELD_TYPES))}."
             )
 
         if questiontype == "radio" and fieldtype != "integer":
             self._error(
-                f"ERROR - FieldType: The FieldType for FieldName '{fieldname}' in table '{worksheet}' must be integer "
+                f"ERROR - FieldType: The FieldType for FieldName '{fieldname}' in worksheet '{worksheet}' must be integer "
                 "when the QuestionType is 'radio'."
             )
 
         if questiontype == "checkbox" and fieldtype != "text":
             self._error(
-                f"ERROR - FieldType: The FieldType for FieldName '{fieldname}' in table '{worksheet}' must be text "
+                f"ERROR - FieldType: The FieldType for FieldName '{fieldname}' in worksheet '{worksheet}' must be text "
                 "when the QuestionType is 'checkbox'."
             )
 
         if questiontype == "date" and fieldtype not in {"date", "datetime"}:
             self._error(
-                f"ERROR - FieldType: The FieldType for FieldName '{fieldname}' in table '{worksheet}' "
+                f"ERROR - FieldType: The FieldType for FieldName '{fieldname}' in worksheet '{worksheet}' "
                 "must be date when the QuestionType is 'date' or 'datetime'."
             )
 
@@ -513,13 +514,13 @@ class ExcelReader:
                 index = response.find(":")
                 if index == -1:
                     self._error(
-                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in table '{worksheet}'. "
+                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in worksheet '{worksheet}'. "
                         f"Expected format 'number:Statement', found '{response}'."
                     )
                     return
                 if len(response.split(":")) != 2:
                     self._error(
-                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in table '{worksheet}'. "
+                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in worksheet '{worksheet}'. "
                         f"Expected format 'number:Statement', found '{response}'."
                     )
                     return
@@ -528,19 +529,19 @@ class ExcelReader:
                 duplicates = sorted({k for k in seen if seen.count(k) > 1})
                 if len(set(seen)) != len(seen):
                     self._error(
-                        f"ERROR - Responses: The Responses for FieldName '{fieldname}' in table '{worksheet}' "
+                        f"ERROR - Responses: The Responses for FieldName '{fieldname}' in worksheet '{worksheet}' "
                         f"has duplicates {','.join(duplicates)}"
                     )
                     return
                 if response.startswith(" "):
                     self._error(
-                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in table '{worksheet}'. "
+                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in worksheet '{worksheet}'. "
                         "Please remove leading spaces."
                     )
                     return
                 if ": " in response:
                     self._error(
-                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in table '{worksheet}'. "
+                        f"ERROR - Responses: Invalid static {questiontype} options for '{fieldname}' in worksheet '{worksheet}'. "
                         "Please remove space after the colon (:) for static responses."
                     )
                     return
@@ -1063,8 +1064,8 @@ class ExcelReader:
         duplicates = sorted({f for f in fields if fields.count(f) > 1})
         if len(set(fields)) != len(fields):
             self._error(
-                "ERROR - Duplicate fieldnames found in worksheet: "
-                f"{worksheet}. Duplicated fieldnames: {','.join(duplicates)}. "
+                f"ERROR - FieldName: Duplicate FieldNames in worksheet '{worksheet}': "
+                f"{','.join(duplicates)}. "
                 "Check for empty rows at the end of the spreadsheet and delete them."
             )
 

@@ -7,6 +7,7 @@ A tool for generating XML configuration files and survey manifests from Excel-ba
 - [Overview](#overview)
 - [How It Works](#how-it-works)
 - [Installation](#installation)
+- [Running the tests](#running-the-tests)
 - [Configuration](#configuration)
 - [Versioning a survey](#versioning-a-survey)
 - [Creating the Excel Data Dictionary](#creating-the-excel-data-dictionary)
@@ -121,6 +122,38 @@ A virtual environment isn't portable — if you move or re-clone this repository
 ### Dependencies
 
 - **openpyxl** (`>=3.1.0`) — reads the Excel data dictionary. Installed automatically via `requirements.txt`.
+
+---
+
+## Running the tests
+
+From the repository root, with the virtual environment active:
+
+```bash
+python -m unittest discover -s tests
+```
+
+**Run it from the root, not from inside `tests/`.** The suite shares fixtures
+between modules (`from tests.test_dd_validations import HEADERS`), so the
+repository folder has to be the working directory for those imports to
+resolve.
+
+There is nothing extra to install — the tests use only the standard library's
+`unittest` plus the `openpyxl` that `requirements.txt` already brings in. There
+is no pytest dependency and no `pyproject.toml`; if you find a `.pytest_cache/`
+folder lying around it is a leftover and is gitignored.
+
+The suite is the main safety net for this tool, because the failures that
+matter here are silent: a data dictionary that validates clean, reports
+SUCCESS, and then behaves wrongly on the tablet. Several tests exist purely to
+assert that the validator and the XML generator agree about the same cell —
+see `tests/test_calculation_registry.py` and
+`tests/test_calculation_part_tags.py`.
+
+For a change that could affect generated output, the stronger check is to
+generate a package before and after against a real data dictionary and compare
+the unzipped contents byte for byte. A refactor should produce no difference at
+all; anything else needs every changed byte accounted for.
 
 ---
 
