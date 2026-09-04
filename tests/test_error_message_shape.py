@@ -1,7 +1,7 @@
 """Every validation error names a category, so the log is scannable.
 
-The messages in `excel_reader` are written by hand at 94 call sites, and the
-review flagged that as drift waiting to happen. Measuring it turned up
+The messages are written by hand at 94 call sites across the reader modules,
+and the review flagged that as drift waiting to happen. Measuring it turned up
 something narrower than expected, which is worth recording because it decided
 the fix:
 
@@ -30,6 +30,18 @@ import unittest
 import excel_reader
 
 
+# Every module that raises validation errors through `self._error(...)`.
+#
+# `excel_reader` was the only one when this test was written. The reader is
+# being split into mixins, and each new module is added here in the same commit
+# that moves code into it -- so `test_the_scan_finds_the_call_sites` below
+# cannot start passing vacuously just because the call sites moved to a file
+# nobody scans. That guard is the whole reason this list is explicit rather
+# than a glob: a module missing from it fails loudly, a glob would quietly
+# absorb whatever it found.
+SCANNED_MODULES = (excel_reader,)
+
+
 # `ERROR - Category: `, where the category may be an f-string placeholder --
 # LowerRange/UpperRange and the DontKnow/Refuse button names are chosen at
 # runtime, which is deliberate and not drift.
@@ -41,7 +53,7 @@ STRING_RE = re.compile(r'f?"((?:[^"\\]|\\.)*)"')
 
 def error_messages() -> list[str]:
     """Every `self._error(...)` message, with its f-string pieces joined."""
-    source = inspect.getsource(excel_reader)
+    source = "\n".join(inspect.getsource(m) for m in SCANNED_MODULES)
     # Implicit concatenation means the pieces join with nothing between them;
     # collapsing runs of whitespace afterwards keeps a line break inside a
     # message from reading as a different wording.
