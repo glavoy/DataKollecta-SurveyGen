@@ -64,12 +64,32 @@ class SurveyGenProcessor:
         the database after the survey rather than after the study, because the
         surveyId carries the version date and therefore moves every revision.
 
-        Deliberately NOT attempted here: detecting that databaseName changed
-        since the last build. That needs state across runs which this tool
-        does not keep, and guessing at it from the output directory would be
-        worse than saying nothing. Both live configs name a database after the
-        study and hold the original date -- exactly right -- so a blanket
-        "contains a date" warning would fire on correct configs.
+        Note what this does NOT catch, because it is the failure that actually
+        matters and the reason is worth writing down properly. This only spots
+        a databaseName that was *shaped* like a version. It cannot tell that
+        the value **changed** since the last build, which is the mistake that
+        restarts a live counter.
+
+        That needs a key identifying the study, stable across versions, to
+        remember the previous value against. No config has one. Every field
+        except databaseName itself carries the version date -- excelFile,
+        surveyName and surveyId all move every revision -- so the only stable
+        key is the value being checked, which is circular. And outputPath is
+        not a substitute: both live configs write to the same directory, so a
+        ledger kept there would mix one study's history with another's.
+
+        Two earlier explanations of this were wrong, so: it is not that the
+        tool keeps no state across runs (it writes a manifest into outputPath
+        every run), and reading that manifest back does not help either, for
+        the reason above -- it cannot be attributed to a study. Closing this
+        needs a deliberate study key in the config, or a ledger somewhere that
+        is not outputPath. Until one exists, the portal's database-name
+        trigger and the app's extract-time check are what stand between a
+        renamed database and duplicate subject IDs.
+
+        Both live configs name a database after the study and hold the
+        original date -- exactly right -- which is why a blanket "contains a
+        date" warning was rejected: it would fire on correct configs.
         """
         database_name = str(self.config.databaseName or "").strip()
         survey_id = str(self.config.surveyId or "").strip()

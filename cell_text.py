@@ -24,6 +24,7 @@ lose.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, time
 from typing import Any
 
 from openpyxl.worksheet.worksheet import Worksheet
@@ -39,17 +40,40 @@ def to_str(value: Any) -> str:
     becomes a response code of "1.0" instead of "1", or a MaxCharacters of
     "3.0" that no downstream check can parse.
 
-    Still open, and deliberately not changed here: a date-formatted cell comes
-    back as a `datetime`, so `str()` gives "2026-07-13 00:00:00" rather than
-    "2026-07-13". Fixing it would change generated output for any dictionary
-    that formats a range cell as a date, so it needs its own verification pass
-    against the real dictionaries rather than riding along with a
-    consolidation.
+    Dates are the other case, and the reason to handle them here rather than
+    at each call site. openpyxl reads a date-formatted cell as a `datetime`, so
+    `str()` gave "2026-07-13 00:00:00" where the author typed a date. The
+    documented dictionary format is `yyyy-mm-dd` (README "Hard-coded Date
+    Format"), which is exactly what `ExcelReader.HARDCODED_DATE_RE` matches, so
+    a midnight datetime is rendered date-only.
+
+    A previous version of this docstring said the problem was that such a cell
+    "fails with a misleading message" in a range. That is the *loud* path, and
+    it was the wrong one to worry about: a range cell that does not match the
+    regex produces a validation error, which is confusing but visible. The
+    silent path is the one that mattered -- the same value flows into
+    QuestionText, into response codes, and into a constant calculation's value,
+    none of which check the format. A date typed as a range bound got an error;
+    a date typed anywhere else shipped "2026-07-13 00:00:00" into the field.
+
+    A datetime carrying an actual time is left as date-and-time. No dictionary
+    column is documented to hold one, so there is no author intent to honour;
+    rendering it in full keeps the value visible to whatever check reads it
+    next instead of quietly discarding the time. Microseconds are dropped,
+    which `str()` would have kept, so the output is stable.
     """
     if value is None:
         return ""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
+    # datetime before date -- datetime is a subclass of date, so the order is
+    # what decides which branch a datetime takes.
+    if isinstance(value, datetime):
+        if value.time() == time(0, 0):
+            return value.strftime("%Y-%m-%d")
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
     return str(value)
 
 
