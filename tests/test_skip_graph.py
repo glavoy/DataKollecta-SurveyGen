@@ -322,6 +322,156 @@ class ShadowedRuleTests(unittest.TestCase):
         )
 
 
+class TestedFieldAvailabilityTests(unittest.TestCase):
+    """The fail-open trap: an unanswered tested field makes a skip do nothing."""
+
+    NEVER = "skip.graph.testsNeverAnsweredField"
+    MAYBE = "skip.graph.testedFieldNotGuaranteed"
+
+    def _fail_open_form(self, guard_cell=""):
+        # `gate` postskips over `middle`, and `later` then tests `middle`.
+        # On the path the postskip takes, `middle` is blank.
+        return [
+            row("gate", "radio", "integer", responses="1:Yes\n0:No",
+                skip="postskip: if gate = 0, skip to later"),
+            row("middle", "radio", "integer", responses="1:Yes\n0:No"),
+            row("later", "radio", "integer", responses="1:Yes\n0:No",
+                skip=(guard_cell + "preskip: if middle = 1, skip to tail")),
+            row("tail", "text", "text"),
+        ]
+
+    def test_a_field_blank_on_some_paths_warns(self):
+        found = findings(self._fail_open_form(), self.MAYBE)
+        self.assertEqual(len(found), 1)
+        self.assertIs(found[0].severity, Severity.WARNING)
+        self.assertIn("fails open", found[0].message)
+
+    def test_a_field_answered_on_every_path_is_silent(self):
+        rows = [
+            row("gate", "radio", "integer", responses="1:Yes\n0:No"),
+            row("middle", "radio", "integer", responses="1:Yes\n0:No"),
+            row("later", "radio", "integer", responses="1:Yes\n0:No",
+                skip="preskip: if middle = 1, skip to tail"),
+            row("tail", "text", "text"),
+        ]
+        self.assertEqual(findings(rows, self.MAYBE), [])
+
+    def test_an_earlier_rule_carrying_the_clearing_condition_suppresses_it(self):
+        # The author already handled the blank case: on the path where `middle`
+        # was cleared, the first rule fires and the second never runs.
+        found = findings(
+            self._fail_open_form("preskip: if gate = 0, skip to tail\n"), self.MAYBE
+        )
+        self.assertEqual(found, [])
+
+    def test_a_preskip_suppresses_a_postskip_on_the_same_question(self):
+        # A preskip fires before the question is displayed, so when it fires
+        # the question's postskips never run at all -- whatever their order.
+        rows = [
+            row("gate", "radio", "integer", responses="1:Yes\n0:No",
+                skip="postskip: if gate = 0, skip to later"),
+            row("middle", "radio", "integer", responses="1:Yes\n0:No"),
+            row("later", "radio", "integer", responses="1:Yes\n0:No",
+                skip=("preskip: if gate = 0, skip to tail\n"
+                      "postskip: if middle = 1, skip to tail")),
+            row("tail", "text", "text"),
+        ]
+        self.assertEqual(findings(rows, self.MAYBE), [])
+
+    def test_a_postskip_does_not_suppress_a_preskip(self):
+        # The reverse does not hold: a postskip runs only after the question
+        # was displayed, which means no preskip fired.
+        rows = [
+            row("gate", "radio", "integer", responses="1:Yes\n0:No",
+                skip="postskip: if gate = 0, skip to later"),
+            row("middle", "radio", "integer", responses="1:Yes\n0:No"),
+            row("later", "radio", "integer", responses="1:Yes\n0:No",
+                skip=("preskip: if middle = 1, skip to tail\n"
+                      "postskip: if gate = 0, skip to tail")),
+            row("tail", "text", "text"),
+        ]
+        self.assertEqual(len(findings(rows, self.MAYBE)), 1)
+
+    def test_one_question_testing_one_field_is_reported_once(self):
+        rows = [
+            row("gate", "radio", "integer", responses="1:Yes\n0:No",
+                skip="postskip: if gate = 0, skip to later"),
+            row("middle", "radio", "integer", responses="1:Yes\n0:No"),
+            row("later", "radio", "integer", responses="1:Yes\n0:No",
+                skip=("preskip: if middle = 1, skip to tail\n"
+                      "postskip: if middle = 0, skip to tail")),
+            row("tail", "text", "text"),
+        ]
+        self.assertEqual(len(findings(rows, self.MAYBE)), 1)
+
+    def test_an_optional_question_is_never_guaranteed(self):
+        # Optional means the interviewer may leave it blank, so a skip testing
+        # one fails open for anyone who does.
+        rows = [
+            row("note", "text", "text", optional="TRUE"),
+            row("later", "radio", "integer", responses="1:Yes\n0:No",
+                skip="preskip: if note = 1, skip to tail"),
+            row("tail", "text", "text"),
+        ]
+        self.assertEqual(len(findings(rows, self.MAYBE)), 1)
+
+    def test_a_postskip_may_test_its_own_field(self):
+        # A postskip runs after its own question is answered, so it always has
+        # a value to read -- the one shape that is guaranteed by construction.
+        rows = [
+            row("gate", "radio", "integer", responses="1:Yes\n0:No",
+                skip="postskip: if gate = 0, skip to tail"),
+            row("middle", "text", "text"),
+            row("tail", "text", "text"),
+        ]
+        self.assertEqual(findings(rows, self.MAYBE), [])
+
+
+class SkipsThatNullCalculationsTests(unittest.TestCase):
+    NULLS = "skip.graph.skipNullsCalculation"
+    ENDS = "skip.graph.endNullsCalculation"
+
+    def test_a_jump_over_a_computable_calculation_warns(self):
+        # `derived` reads `price`, which is answered before the jump -- so it
+        # could have been computed, and is nulled instead.
+        rows = [
+            numeric_row("price", lower="0", upper="100"),
+            row("gate", "radio", "integer", responses="1:Yes\n0:No",
+                skip="postskip: if gate = 0, skip to tail"),
+            row("derived", "automatic", "integer", responses="calc:lookup\nfield:price"),
+            row("tail", "text", "text"),
+        ]
+        found = findings(rows, self.NULLS)
+        self.assertEqual(len(found), 1)
+        self.assertIn("'derived'", found[0].message)
+
+    def test_a_jump_over_a_calculation_whose_inputs_were_also_skipped_is_silent(self):
+        # The section was not asked, so its derived value being empty is
+        # correct. This is what keeps the rule from firing on every long jump.
+        rows = [
+            row("gate", "radio", "integer", responses="1:Yes\n0:No",
+                skip="postskip: if gate = 0, skip to tail"),
+            numeric_row("price", lower="0", upper="100"),
+            row("derived", "automatic", "integer", responses="calc:lookup\nfield:price"),
+            row("tail", "text", "text"),
+        ]
+        self.assertEqual(findings(rows, self.NULLS), [])
+
+    def test_ending_early_over_a_computable_calculation_warns_separately(self):
+        rows = [
+            numeric_row("price", lower="0", upper="100"),
+            row("gate", "radio", "integer", responses="1:Yes\n0:No",
+                skip="postskip: if gate = 0, skip to end"),
+            row("derived", "automatic", "integer", responses="calc:lookup\nfield:price"),
+            row("tail", "text", "text"),
+        ]
+        found = findings(rows, self.ENDS)
+        self.assertEqual(len(found), 1)
+        self.assertIn("skip to end", found[0].message)
+        self.assertIn("trailing system variables still compute", found[0].message)
+        self.assertEqual(findings(rows, self.NULLS), [])
+
+
 class AlreadyReportedElsewhereTests(unittest.TestCase):
     """Cases `dd_validators` owns, which this module must not repeat.
 

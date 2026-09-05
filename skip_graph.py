@@ -115,6 +115,30 @@ RULES: dict[str, Rule] = {
             "An earlier rule in the same cell always fires first, so this one "
             "can never be reached.",
         ),
+        Rule(
+            "skip.graph.testsNeverAnsweredField",
+            Severity.ERROR,
+            "The tested field is unanswered on every path that reaches this "
+            "question, so the skip can never fire.",
+        ),
+        Rule(
+            "skip.graph.testedFieldNotGuaranteed",
+            Severity.WARNING,
+            "The tested field is not answered on every path, and an unanswered "
+            "field makes a skip fail open.",
+        ),
+        Rule(
+            "skip.graph.skipNullsCalculation",
+            Severity.WARNING,
+            "A skip jumps over a calculated field, which is cleared rather "
+            "than computed.",
+        ),
+        Rule(
+            "skip.graph.endNullsCalculation",
+            Severity.WARNING,
+            "Ending the interview early clears every calculated field after "
+            "this point.",
+        ),
     )
 }
 
@@ -629,11 +653,460 @@ def _shadow_reason(earlier: SkipEdge, later: SkipEdge) -> str | None:
     return None
 
 
-def lint_form(worksheet: str, questions: list[Question]) -> list[Finding]:
-    """Every finding for one questionnaire."""
+# ── Which fields hold a value, and where ─────────────────────────────────────
+
+
+def _stores_a_value(question: Question, *, guaranteed: bool) -> bool:
+    """Whether reaching this question leaves an answer behind.
+
+    The two analyses need different answers, and conflating them is wrong in
+    both directions. `information` and `button` store nothing on any path, so
+    they are excluded from both. An **optional** question is the interesting
+    case: it may be left blank, so it is not guaranteed -- but it may equally
+    be answered, so excluding it from the *may* set too would make it look
+    like a field no path can ever fill, which is the error-level claim. It is
+    excluded from `must` only.
+
+    `automatic` fields are included in both, even though they are never
+    displayed: navigation computes one when it reaches it, and a dictionary
+    where that would not produce a value is already blocked by
+    `_check_automatic_has_calculation`.
+    """
+    if question.questionType in ("information", "button"):
+        return False
+    if guaranteed and question.optional in _TRUTHY:
+        return False
+    return True
+
+
+@dataclass
+class AnsweredSets:
+    """What is answered when navigation lands on each question.
+
+    `must[j]` is answered on **every** path reaching j; `may[j]` on **at least
+    one**. The two support opposite claims and neither alone is enough:
+    a field missing from `may` can never be answered there, which is decidable
+    and an error; a field in `may` but not `must` is answered on some paths and
+    not others, which is the fail-open trap and only ever a warning.
+    """
+
+    must: list[frozenset[str]]
+    may: list[frozenset[str]]
+
+
+def _cleared_range(graph: FormGraph, edge: SkipEdge) -> range:
+    """The questions an edge jumps over, whose answers the app nulls.
+
+    A preskip clears from its own question inclusive; a postskip from the one
+    after it. Not a detail: `findNextDisplayedQuestion` calls
+    `clearAnswersInRange(startIndex: index)` for a preskip while
+    `advanceFromQuestion` passes `currentIndex + 1` for a postskip, so a
+    preskip erases the answer to the question it guards.
+    """
+    start = edge.source if edge.is_preskip else edge.source + 1
+    end = len(graph.questions) if edge.is_end else edge.target
+    if end is None or end <= start:
+        return range(0)
+    return range(start, end)
+
+
+def _protected_fields(graph: FormGraph, crf) -> frozenset[str]:
+    """Fields `clearAnswersInRange` refuses to null.
+
+    The app exempts the reserved system variables and the form's primary keys.
+    Without the second, a composite key of `automatic` fields would read as
+    cleared by any skip jumping over it, and every skip downstream of one would
+    be reported as testing a field that might be blank.
+    """
+    from models import RESERVED_SYSTEM_FIELDS
+
+    protected = {name.lower() for name in RESERVED_SYSTEM_FIELDS}
+    if crf is not None and getattr(crf, "primarykey", None):
+        protected.update(p.strip().lower() for p in str(crf.primarykey).split(","))
+    if crf is not None and getattr(crf, "linkingfield", None):
+        protected.add(str(crf.linkingfield).strip().lower())
+    if crf is not None and getattr(crf, "incrementfield", None):
+        protected.add(str(crf.incrementfield).strip().lower())
+    return frozenset(p for p in protected if p)
+
+
+def answered_sets(graph: FormGraph, crf=None) -> AnsweredSets:
+    """Forward dataflow over the live edges.
+
+    A single pass in index order is enough: every edge kept here points
+    forward (a backward one is IGNORED, because the app drops it), so the graph
+    is a DAG in the order the list is already in and no fixpoint iteration is
+    needed.
+    """
+    n = len(graph.questions)
+    protected = _protected_fields(graph, crf)
+
+    # Incoming edges per node, as (source, gained, cleared) triples. END is not
+    # a node any question follows, so edges to it contribute to nothing.
+    # (source, gained-for-must, gained-for-may, cleared)
+    incoming: dict[
+        int, list[tuple[int, frozenset[str], frozenset[str], frozenset[str]]]
+    ] = {j: [] for j in range(n)}
+
+    for i, question in enumerate(graph.questions):
+        preskips = [
+            e
+            for e in graph.edges
+            if e.source == i and e.is_preskip and e.edge_class is not EdgeClass.IGNORED
+        ]
+        postskips = [
+            e
+            for e in graph.edges
+            if e.source == i
+            and not e.is_preskip
+            and e.edge_class is not EdgeClass.IGNORED
+        ]
+
+        def cleared_for(edge: SkipEdge) -> frozenset[str]:
+            return frozenset(
+                graph.questions[k].fieldName
+                for k in _cleared_range(graph, edge)
+                if graph.questions[k].fieldName.lower() not in protected
+            )
+
+        # A preskip fires before the question is displayed, so nothing is
+        # gained by taking it.
+        for edge in preskips:
+            if edge.target is not None and edge.target < n:
+                incoming[edge.target].append(
+                    (i, frozenset(), frozenset(), cleared_for(edge))
+                )
+
+        name = frozenset({question.fieldName})
+        gained_must = name if _stores_a_value(question, guaranteed=True) else frozenset()
+        gained_may = name if _stores_a_value(question, guaranteed=False) else frozenset()
+
+        # The display case: no preskip fired, the question was answered, and
+        # then either a postskip jumped or navigation fell through.
+        for edge in postskips:
+            if edge.target is not None and edge.target < n:
+                incoming[edge.target].append(
+                    (i, gained_must, gained_may, cleared_for(edge))
+                )
+
+        if i + 1 < n:
+            incoming[i + 1].append((i, gained_must, gained_may, frozenset()))
+
+    must: list[frozenset[str]] = [frozenset()] * n
+    may: list[frozenset[str]] = [frozenset()] * n
+
+    for j in range(n):
+        if j == 0 or not incoming[j]:
+            # The first question, or one reachable only by edges this module
+            # dropped. Nothing is guaranteed, and nothing is possible.
+            continue
+        contributions_must = []
+        contributions_may = []
+        for source, gained_must, gained_may, cleared in incoming[j]:
+            contributions_must.append((must[source] | gained_must) - cleared)
+            contributions_may.append((may[source] | gained_may) - cleared)
+        must[j] = frozenset.intersection(*[frozenset(c) for c in contributions_must])
+        may[j] = frozenset.union(*[frozenset(c) for c in contributions_may])
+
+    return AnsweredSets(must=must, may=may)
+
+
+def calculation_inputs(question: Question) -> frozenset[str]:
+    """Every field a calculation reads.
+
+    Needed to tell the two shapes apart when a skip jumps over a calculated
+    field. If the calculation's inputs were themselves skipped, it *should*
+    come out empty and there is nothing to report; if they were all answered,
+    the value was computable and is being thrown away. Without this the rule
+    fires on every long jump that happens to contain a calculation, which on
+    one real dictionary was 36 times -- noise that would get the whole linter
+    switched off rather than read.
+    """
+    names: set[str] = set()
+
+    def walk_part(part) -> None:
+        if part is None:
+            return
+        if getattr(part, "lookupField", ""):
+            names.add(part.lookupField)
+        for parameter in getattr(part, "queryParameters", []) or []:
+            if parameter.fieldName:
+                names.add(parameter.fieldName)
+        for nested in getattr(part, "parts", []) or []:
+            walk_part(nested)
+
+    if question.calculationLookupField:
+        names.add(question.calculationLookupField)
+    for parameter in question.calculationQueryParameters or []:
+        if parameter.fieldName:
+            names.add(parameter.fieldName)
+    for condition in question.calculationCaseConditions or []:
+        if condition.field:
+            names.add(condition.field)
+        walk_part(condition.result)
+    walk_part(question.calculationCaseElse)
+    for part in question.calculationMathParts or []:
+        walk_part(part)
+    for part in question.calculationConcatParts or []:
+        walk_part(part)
+
+    return frozenset(names)
+
+
+def _clearing_conditions(graph: FormGraph, field_name: str) -> set[tuple[str, str, str]]:
+    """The skip conditions under which `field_name` is cleared.
+
+    Used to recognise that a later rule in a cell is already guarded by an
+    earlier one. See `_is_guarded_by_earlier_rule`.
+    """
+    conditions: set[tuple[str, str, str]] = set()
+    for edge in graph.edges:
+        if edge.edge_class is EdgeClass.IGNORED:
+            continue
+        for k in _cleared_range(graph, edge):
+            if graph.questions[k].fieldName == field_name:
+                conditions.add(
+                    (edge.parsed.field, edge.parsed.operator, edge.parsed.value)
+                )
+                break
+    return conditions
+
+
+def _is_guarded_by_earlier_rule(graph: FormGraph, edge: SkipEdge) -> bool:
+    """Whether an earlier rule in the same cell already handles the blank case.
+
+    The shape this exists for, from a real dictionary:
+
+        row 19  preskip: if country <> 1, skip to age_at_sep2023   (clears age_in_range_ug)
+        row 26  preskip: if country <> 1, skip to age_warning_bf
+                preskip: if age_in_range_ug = 1, skip to ...
+
+    On the path where `age_in_range_ug` was cleared, row 26's *first* rule
+    fires and the second is never evaluated -- rules are tried in order and the
+    first match wins. So the second rule never sees the blank, and warning
+    about it is wrong.
+
+    Recognised only when an earlier rule carries exactly the condition that
+    does the clearing. Anything looser would need to reason about which paths
+    reach the question, which is the thing this module deliberately does not
+    do.
+
+    "Earlier" is asymmetric between the two sections, and getting that
+    backwards costs real findings. A preskip fires *before* the question is
+    displayed, so when it fires navigation leaves and the question's postskips
+    never run at all -- a preskip therefore guards every postskip on the same
+    question, whatever their order. A postskip runs only after the question was
+    displayed, which means no preskip fired, so it can never guard one.
+    """
+    clearing = _clearing_conditions(graph, edge.parsed.field)
+    if not clearing:
+        return False
+
+    for earlier in graph.edges:
+        if earlier.source != edge.source:
+            continue
+
+        if edge.is_preskip:
+            # Only an earlier preskip on the same question.
+            if not earlier.is_preskip or earlier.order >= edge.order:
+                continue
+        else:
+            # Any preskip, or an earlier postskip.
+            if not earlier.is_preskip and earlier.order >= edge.order:
+                continue
+
+        key = (earlier.parsed.field, earlier.parsed.operator, earlier.parsed.value)
+        if key in clearing:
+            return True
+    return False
+
+
+def _check_tested_field_availability(
+    graph: FormGraph, sets: AnsweredSets
+) -> list[Finding]:
+    """Skips whose tested field may -- or must -- be blank when they run.
+
+    An unanswered tested field makes a skip **fail open**: `evaluateSkip`
+    returns null rather than raising, so the rule never fires and the question
+    it guards is asked of everyone. Silent, and the opposite of what the author
+    wrote.
+
+    Two findings, split by what is decidable. If the field is answered on no
+    path at all, the skip can never fire and that is an error. If it is
+    answered on some paths but not others, the skip works for some respondents
+    and silently does not for the rest -- which is real, but rests on a path
+    analysis that over-approximates, so it warns.
+    """
+    findings: list[Finding] = []
+    # One question testing one field across several rules is one problem with
+    # one remedy, so it is reported once. Without this a cell carrying both a
+    # preskip and a postskip on the same field says the same thing twice.
+    already_reported: set[tuple[int, str]] = set()
+
+    for edge in graph.edges:
+        if edge.edge_class is EdgeClass.IGNORED:
+            continue
+        if edge.parsed.field not in graph.index_of:
+            continue
+        if (edge.source, edge.parsed.field) in already_reported:
+            continue
+
+        source = graph.questions[edge.source]
+        tested_index = graph.index_of[edge.parsed.field]
+        tested = graph.questions[tested_index]
+
+        # A postskip runs after its own question is answered, so a rule testing
+        # the field it is attached to always has a value to read.
+        if tested_index == edge.source:
+            continue
+
+        landing = sets.must[edge.source]
+        possible = sets.may[edge.source]
+
+        if edge.parsed.field in landing:
+            continue
+
+        if _is_guarded_by_earlier_rule(graph, edge):
+            continue
+
+        already_reported.add((edge.source, edge.parsed.field))
+        skipped = _guarded_range(graph, edge)
+        guarded = skipped if skipped else "the question it guards"
+
+        if edge.parsed.field not in possible:
+            findings.append(
+                Finding(
+                    rule_id="skip.graph.testsNeverAnsweredField",
+                    worksheet=graph.worksheet,
+                    field_name=source.fieldName,
+                    row_index=source.rowIndex,
+                    message=(
+                        f"In worksheet '{graph.worksheet}', the {edge.parsed.kind} for "
+                        f"FieldName '{source.fieldName}' ({_where(graph, edge.source)}) "
+                        f"tests '{edge.parsed.field}' ({_where(graph, tested_index)}), "
+                        "which is unanswered on every path that reaches it. A skip whose "
+                        f"tested field is blank never fires, so {guarded} branches for "
+                        "nobody."
+                    ),
+                )
+            )
+        else:
+            findings.append(
+                Finding(
+                    rule_id="skip.graph.testedFieldNotGuaranteed",
+                    worksheet=graph.worksheet,
+                    field_name=source.fieldName,
+                    row_index=source.rowIndex,
+                    message=(
+                        f"In worksheet '{graph.worksheet}', the {edge.parsed.kind} for "
+                        f"FieldName '{source.fieldName}' ({_where(graph, edge.source)}) "
+                        f"tests '{edge.parsed.field}' ({_where(graph, tested_index)}), "
+                        "which is not answered on every path that reaches this question "
+                        "-- an earlier skip can jump over it. On those paths this rule "
+                        f"fails open and {guarded} is asked of everyone. Test a field "
+                        "answered on every path, or guard this question on the same "
+                        "condition that skipped the other one."
+                    ),
+                )
+            )
+    return findings
+
+
+def _check_skips_that_null_calculations(graph: FormGraph, crf=None) -> list[Finding]:
+    """Calculated fields inside a range a skip jumps over.
+
+    A skipped-over answer is nulled, not computed -- including a `calc:` field,
+    whose inputs may themselves have been cleared on the way. The app's
+    `_advanceToEnd` says so in as many words for the `skip to end` case, which
+    is worse because it clears everything to the end of the form.
+
+    Both warn rather than error: ending an interview early and leaving a
+    screened-out record's derived fields empty is often exactly what the author
+    intends. The point is that it should be a decision, not a discovery.
+    """
+    protected = _protected_fields(graph, crf)
+    findings: list[Finding] = []
+
+    for edge in graph.edges:
+        if edge.edge_class is EdgeClass.IGNORED:
+            continue
+        cleared_indices = list(_cleared_range(graph, edge))
+        cleared_names = {graph.questions[k].fieldName for k in cleared_indices}
+        cleared = [
+            graph.questions[k]
+            for k in cleared_indices
+            if graph.questions[k].questionType == "automatic"
+            and graph.questions[k].calculationType.value != "None"
+            and graph.questions[k].fieldName.lower() not in protected
+            # Only when the calculation could actually have been computed.
+            # A calculation whose own inputs are inside the same jumped-over
+            # range is *supposed* to come out empty -- the section it belongs
+            # to was not asked -- and reporting that is noise, not a finding.
+            # One whose inputs were all answered is a value being discarded.
+            and calculation_inputs(graph.questions[k])
+            and not (calculation_inputs(graph.questions[k]) & cleared_names)
+        ]
+        if not cleared:
+            continue
+
+        source = graph.questions[edge.source]
+        names = ", ".join(f"'{q.fieldName}' (row {q.rowIndex})" for q in cleared[:4])
+        if len(cleared) > 4:
+            names += f" and {len(cleared) - 4} more"
+
+        if edge.is_end:
+            findings.append(
+                Finding(
+                    rule_id="skip.graph.endNullsCalculation",
+                    worksheet=graph.worksheet,
+                    field_name=source.fieldName,
+                    row_index=source.rowIndex,
+                    message=(
+                        f"In worksheet '{graph.worksheet}', FieldName "
+                        f"'{source.fieldName}' ({_where(graph, edge.source)}) ends the "
+                        "interview early ('skip to end'). Every question after it is "
+                        "walked and cleared, so the calculated field(s) "
+                        f"{names} are empty for every record taking that branch. The "
+                        "trailing system variables still compute; a 'calc:' field in the "
+                        "walked range does not."
+                    ),
+                )
+            )
+        else:
+            findings.append(
+                Finding(
+                    rule_id="skip.graph.skipNullsCalculation",
+                    worksheet=graph.worksheet,
+                    field_name=source.fieldName,
+                    row_index=source.rowIndex,
+                    message=(
+                        f"In worksheet '{graph.worksheet}', the {edge.parsed.kind} on "
+                        f"FieldName '{source.fieldName}' ({_where(graph, edge.source)}) "
+                        f"jumps over the calculated field(s) {names}. A skipped-over "
+                        "field is nulled, not computed, so they are empty for every "
+                        "record taking that branch. Place a calculation before any skip "
+                        "that can bypass it."
+                    ),
+                )
+            )
+    return findings
+
+
+def lint_form(worksheet: str, questions: list[Question], crf=None) -> list[Finding]:
+    """Every finding for one questionnaire.
+
+    `crf` is the form's `crfs` row when there is one. It is optional because
+    the analysis is useful without it, but supplying it makes the answered-set
+    analysis sharper: primary key, linking and increment fields are exempt from
+    clearing, and without knowing their names a skip jumping over a composite
+    key reads as erasing it.
+    """
     graph = build_graph(worksheet, questions)
+    sets = answered_sets(graph, crf)
     findings: list[Finding] = []
     findings.extend(_check_dead_branches(graph))
     findings.extend(_check_total_conditions(graph))
     findings.extend(_check_shadowed_rules(graph))
+    findings.extend(_check_tested_field_availability(graph, sets))
+    findings.extend(_check_skips_that_null_calculations(graph, crf))
     return sorted(findings, key=lambda f: (f.row_index, f.rule_id))

@@ -53,7 +53,21 @@ _WARNING_CATEGORY = re.compile(r"^WARNING - ([^:]+):")
 # the surveyId plus `.sqlite`, because in a real study that restarts the
 # subject-ID counter on every revision. Here that is the intent: each cell is a
 # throwaway database that must not share a counter with the other eleven.
-EXPECTED_WARNING_CATEGORIES = frozenset({"Reserved variable", "databaseName"})
+#
+# `Skip graph` -- these are real findings in the source study, not noise. At the
+# time of writing PRISM CSS produces five: one fail-open (`nets_dd` row 9 tests
+# `labelobs`, which row 5 clears when `obs = 0`, so brand-observation questions
+# are asked about a net nobody looked at) and four calculations sitting inside a
+# range a skip jumps over. They are listed as acceptable because this fixture is
+# a real dictionary that belongs to a study, not a file this repo may edit --
+# **not** because skip-graph warnings are expected to be harmless.
+#
+# Deliberately a category and not a count. The source dictionary is revised
+# regularly, so pinning the number would fail on every revision and teach
+# whoever hits it to raise the number rather than read the finding.
+EXPECTED_WARNING_CATEGORIES = frozenset(
+    {"Reserved variable", "databaseName", "Skip graph"}
+)
 
 
 def _source_dictionary() -> tuple[Path, Path] | None:
