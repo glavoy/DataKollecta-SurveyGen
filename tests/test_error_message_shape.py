@@ -49,6 +49,13 @@ SCANNED_MODULES = (
     dd_validators,
 )
 
+# `skip_graph` is deliberately not in that list, and its absence is not drift.
+# It raises nothing through `self._error`: every message it produces goes
+# through one `Finding.format()`, so the prefix is guaranteed by construction
+# rather than by 94 authors remembering it. Scanning it would find no call
+# sites and imply it had none to check. `tests/test_skip_graph.py` asserts its
+# shape against `PREFIX_RE` below, so the two cannot drift apart.
+
 
 # `ERROR - Category: `, where the category may be an f-string placeholder --
 # LowerRange/UpperRange and the DontKnow/Refuse button names are chosen at

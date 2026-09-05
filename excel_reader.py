@@ -198,6 +198,7 @@ class ExcelReader(
                     continue
 
                 q = Question()
+                q.rowIndex = row_idx
                 q.fieldName = self._get_cell_trim(worksheet, row_idx, 1)
                 if not q.fieldName:
                     self._error(

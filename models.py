@@ -234,6 +234,14 @@ class Question:
     skip: str = ""
     mask: str = ""
 
+    # The 1-based worksheet row this came from, so a message can send someone
+    # to the cell rather than to a field name they then have to search for.
+    # `skip_graph` reports on relationships *between* rows -- "row 42's skip
+    # can never fire because of row 11" -- where naming both is the difference
+    # between a finding and a puzzle. 0 means "not read from a worksheet",
+    # which is the case for the system fields the generator injects itself.
+    rowIndex: int = 0
+
 
 @dataclass
 class AppConfig:
