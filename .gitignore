@@ -219,3 +219,7 @@ config.json
 /workshop_kit/
 config_r21.json
 config_prism_css.json
+# Test kit: generated from a real dictionary, which is itself untracked.
+# The generator and the matrix declaration are tracked; their output is not.
+test_kit/variants/
+test_output/
