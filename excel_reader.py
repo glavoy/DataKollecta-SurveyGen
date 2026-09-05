@@ -10,7 +10,7 @@ from models import (
     ResponseSourceType,
 )
 from calculation_parser import CalculationParsingMixin
-from cell_text import cell_raw, cell_trim, split_cell_lines, to_str
+from cell_text import cell_raw, cell_trim, split_cell_lines
 from dd_validators import WorksheetValidationMixin
 from response_parser import ResponseParsingMixin
 from skip_parser import parse_skip, split_skip_lines
@@ -352,12 +352,15 @@ class ExcelReader(
 
         return self.questionList
 
-    # Thin wrappers over cell_text, kept as methods because they are called
-    # ~200 times in this file and the shorter name reads better at the call
-    # site. The implementations are shared with crf_reader and xml_generator
-    # so the same cell cannot be read two different ways.
+    # Thin wrappers over cell_text, kept as methods because the shorter name
+    # reads better at the ~20 call sites across this class and its mixins.
+    # The implementations are shared with crf_reader and xml_generator so the
+    # same cell cannot be read two different ways.
+    #
+    # There is deliberately no `_to_str` alias: nothing ever called it, and
+    # the two callers that want that function are `cell_trim`/`cell_raw`
+    # inside cell_text itself.
     _split_lines = staticmethod(split_cell_lines)
-    _to_str = staticmethod(to_str)
 
     def _get_cell_trim(self, ws: Worksheet, row: int, col: int) -> str:
         return cell_trim(ws, row, col)
