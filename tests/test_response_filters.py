@@ -238,5 +238,79 @@ class ResponseFilterXmlTests(unittest.TestCase):
             self.assertIn("netnum != @netnum", sql.text)
 
 
+class DatabaseIdentifierValidationTests(unittest.TestCase):
+    """`table`/`filter` column/`display`/`value` on a `source:database` response
+    must be plain identifiers, matching the app's `SurveyTableSchema.validateIdentifier`
+    -- otherwise a name like `first name` builds a clean package that the app only
+    refuses at install time, in the field.
+    """
+
+    def _errors_for(self, responses):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "nets_dd"
+        worksheet.append(HEADERS)
+        worksheet.append(_question_row("who", responses))
+
+        reader = ExcelReader()
+        reader.create_question_list(worksheet)
+        return reader.errorsEncountered, "\n".join(reader.logstring)
+
+    def test_a_table_with_a_space_is_an_error(self):
+        errors_found, log = self._errors_for(
+            "source:database\ntable:hh members\ndisplay:name\nvalue:code"
+        )
+
+        self.assertTrue(errors_found, log)
+        self.assertIn("table attribute", log)
+        self.assertIn("not a plain identifier", log)
+
+    def test_a_filter_column_starting_with_a_digit_is_an_error(self):
+        # FILTER_MATCH_RE's column group is `\w+`, so a space can never reach
+        # a filter's column -- it would just split the line differently. A
+        # leading digit is the shape of invalid identifier that *does* survive
+        # that regex, so it is what exercises this check.
+        errors_found, log = self._errors_for(
+            "source:database\ntable:hh_members\nfilter:2ndline = 1\n"
+            "display:name\nvalue:code"
+        )
+
+        self.assertTrue(errors_found, log)
+        self.assertIn("filter column attribute", log)
+
+    def test_a_display_column_with_a_space_is_an_error(self):
+        errors_found, log = self._errors_for(
+            "source:database\ntable:hh_members\ndisplay:Health Facility\nvalue:code"
+        )
+
+        self.assertTrue(errors_found, log)
+        self.assertIn("display attribute", log)
+
+    def test_a_value_column_with_a_space_is_an_error(self):
+        errors_found, log = self._errors_for(
+            "source:database\ntable:hh_members\ndisplay:name\nvalue:facility code"
+        )
+
+        self.assertTrue(errors_found, log)
+        self.assertIn("value attribute", log)
+
+    def test_plain_identifiers_are_accepted(self):
+        errors_found, log = self._errors_for(
+            "source:database\ntable:hh_members\nfilter:linenum = 1\n"
+            "display:participantsname\nvalue:linenum"
+        )
+
+        self.assertFalse(errors_found, log)
+
+    def test_a_csv_source_with_the_same_name_is_exempt(self):
+        # A CSV's columns are its header row, not a SQL identifier -- the
+        # app only runs this check when source == database.
+        errors_found, log = self._errors_for(
+            "source:csv\nfile:facilities.csv\ndisplay:Health Facility\nvalue:code"
+        )
+
+        self.assertFalse(errors_found, log)
+
+
 if __name__ == "__main__":
     unittest.main()

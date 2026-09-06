@@ -43,6 +43,16 @@ class ResponseParsingMixin:
     FILTER_MATCH_RE = re.compile(
         r"^(\w+)\s*(?:((?i:not\s+in|in)|>=|<=|!=|<>|=|>|<)\s*)?(.+)$"
     )
+    # What the app's `SurveyTableSchema.validateIdentifier` accepts for a
+    # `table`/`column` name it is about to interpolate into a raw SQL
+    # statement: a letter or underscore, then letters, digits and
+    # underscores, up to 63 characters. Deliberately not `_check_field_name`'s
+    # stricter rule (lowercase, no leading underscore, no 'end') -- these name
+    # an *external* database's table/columns, not a FieldName this generator
+    # creates. A CSV-sourced response's `table`/`display`/`value` are exempt:
+    # those name a header row, not a SQL identifier, and the app only runs
+    # this check when `source == database` (`survey_loader.dart`).
+    DATABASE_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
     # Operator spellings a dictionary author plausibly writes that this
     # filter grammar does NOT support. They matter because FILTER_MATCH_RE's
     # operator group is optional: with no recognised operator the whole
@@ -121,6 +131,24 @@ class ResponseParsingMixin:
             "the operators handled above, so reaching here means the regex and "
             "this function have drifted apart."
         )
+
+    def _check_database_identifier(
+        self, name: str, label: str, worksheet: str, fieldname: str
+    ) -> None:
+        """Reject a database-source `table`/`column` name the app would refuse.
+
+        Only called for `source:database` -- see `DATABASE_IDENTIFIER_RE`.
+        Skips an empty name: `display`/`value` are optional lines, and
+        `_parse_dynamic_responses` already leaves them at their `""` default
+        when absent.
+        """
+        if name and not self.DATABASE_IDENTIFIER_RE.fullmatch(name):
+            self._error(
+                f"ERROR - Responses: {label} '{name}' for FieldName '{fieldname}' "
+                f"in worksheet '{worksheet}' is not a plain identifier. Only letters, "
+                "digits, and underscores are allowed, and it must start with a letter "
+                "or underscore."
+            )
 
     def _parse_dynamic_responses(self, responses: str, question: Question, worksheet: str, fieldname: str) -> None:
         for line in self._split_lines(responses):
@@ -211,3 +239,18 @@ class ResponseParsingMixin:
                 self.logstring.append(
                     f"WARNING - Responses: Unknown dynamic response key '{key}' for FieldName '{fieldname}' in worksheet '{worksheet}'."
                 )
+
+        if question.responseSourceType == ResponseSourceType.DATABASE:
+            self._check_database_identifier(
+                question.responseSourceTable, "table attribute", worksheet, fieldname
+            )
+            for response_filter in question.responseFilters:
+                self._check_database_identifier(
+                    response_filter.column, "filter column attribute", worksheet, fieldname
+                )
+            self._check_database_identifier(
+                question.responseDisplayColumn, "display attribute", worksheet, fieldname
+            )
+            self._check_database_identifier(
+                question.responseValueColumn, "value attribute", worksheet, fieldname
+            )
