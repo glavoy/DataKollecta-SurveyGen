@@ -50,6 +50,62 @@ from models import (
 )
 
 
+_SELECT_RE = re.compile(r"^SELECT\b", re.IGNORECASE)
+
+
+def _validate_query_sql(sql: str) -> str | None:
+    """Why `sql` is not a lookup a data dictionary may run, or None.
+
+    A `calc:query` is the one cell that becomes a whole SQL statement rather
+    than a name, and the app hands it to `db.rawQuery` on the survey's normal
+    read/write connection -- so without a rule here a `sql:` cell can write as
+    easily as read, and the app swallows the outcome. Three rules, mirroring
+    `SurveyTableSchema.validateQuerySql` in the app repo, which is the door
+    that actually refuses a package; this one exists so the designer finds out
+    at generation time instead:
+
+      * one statement -- outside quoting, a `;` only as the last character;
+      * no `--` or ``/* */`` comment, which is how a second statement hides
+        from the check below;
+      * the leading keyword is SELECT.
+
+    `WITH` is refused even though a CTE reads as harmless: SQLite allows
+    ``WITH ... DELETE``, so admitting it would make the leading keyword mean
+    nothing. A SELECT cannot modify the database, so these three are the whole
+    guarantee -- no list of dangerous words is involved, that being the
+    approach that leaks.
+    """
+    statement = sql.strip()
+    if not statement:
+        return "the sql is empty"
+
+    # One pass, tracking whether we are inside a literal. A doubled quote is
+    # SQLite's escape for a quote of the same kind and needs no special case:
+    # the toggle closes and immediately reopens.
+    quote = None
+    for i, ch in enumerate(statement):
+        if quote is not None:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"`":
+            quote = ch
+            continue
+        if statement.startswith("--", i):
+            return "it contains a -- comment"
+        if statement.startswith("/*", i):
+            return "it contains a /* */ comment"
+        if ch == ";" and statement[i + 1 :].strip():
+            return "it contains more than one statement"
+    if quote is not None:
+        return "a quote is left open"
+
+    if not _SELECT_RE.match(statement):
+        return "it does not begin with SELECT"
+
+    return None
+
+
 class CalculationParsingMixin:
     """The `calc:` half of `ExcelReader`. Not usable on its own.
 
@@ -208,6 +264,14 @@ class CalculationParsingMixin:
         if part_type == "lookup":
             return CalculationPart(type=CalculationType.LOOKUP, lookupField=part_value)
         if part_type == "query":
+            reason = _validate_query_sql(part_value)
+            if reason:
+                self._error(
+                    f"ERROR - Calculation: Query part for FieldName '{fieldname}' in worksheet '{worksheet}' "
+                    f"has unusable sql -- {reason}. It must be a single SELECT statement, with no trailing "
+                    "statement and no SQL comment."
+                )
+                return None
             return CalculationPart(type=CalculationType.QUERY, querySql=part_value)
 
         self._error(
@@ -222,6 +286,15 @@ class CalculationParsingMixin:
             self._error(
                 f"ERROR - Calculation: Query calculation for FieldName '{fieldname}' in worksheet '{worksheet}' "
                 "is missing required 'sql' field."
+            )
+        elif ctype == CalculationType.QUERY and _validate_query_sql(question.calculationQuerySql):
+            # The one cell that becomes a whole statement. The app refuses a
+            # package whose sql is not a single SELECT; this says so here,
+            # where the dictionary author can still fix the row.
+            self._error(
+                f"ERROR - Calculation: Query calculation for FieldName '{fieldname}' in worksheet '{worksheet}' "
+                f"has unusable sql -- {_validate_query_sql(question.calculationQuerySql)}. It must be a single "
+                "SELECT statement, with no trailing statement and no SQL comment."
             )
         elif ctype == CalculationType.CASE and len(question.calculationCaseConditions) == 0:
             self._error(

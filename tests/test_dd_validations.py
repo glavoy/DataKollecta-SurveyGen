@@ -1094,3 +1094,60 @@ class MaskLengthTests(unittest.TestCase):
         reader = read([row("pid", "text", "text", maxchars="10",
                            responses="mask:[0-9][0-9]:[0-9][0-9]")])
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+
+class QuerySqlTests(unittest.TestCase):
+    """The `sql:` cell is the one cell that becomes a whole SQL statement.
+
+    The app refuses a package whose query calculation is not a single SELECT
+    (`SurveyTableSchema.validateQuerySql`), because it runs that statement on
+    the survey's read/write connection and swallows the outcome. These tests
+    are the same rule stated where the dictionary author can still act on it.
+    """
+
+    def query(self, sql):
+        return read([row("village", "calculated", "text",
+                         responses=f"calc:query\nsql:{sql}\nparam:@mrccode = mrccode"),
+                     row("mrccode", "text", "text", maxchars="4")])
+
+    def test_a_lookup_still_generates(self):
+        reader = self.query(
+            "SELECT distinct mrcname FROM villages WHERE mrccode = @mrccode")
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_second_statement_is_an_error(self):
+        reader = self.query("SELECT name FROM villages; DELETE FROM villages")
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn("more than one statement", message)
+        self.assertIn("village", message)
+
+    def test_a_statement_that_is_not_a_select_is_an_error(self):
+        for sql in ["DELETE FROM villages", "DROP TABLE villages",
+                    "PRAGMA journal_mode = WAL",
+                    "ATTACH DATABASE 'x.db' AS x",
+                    # Read-only in isolation, but SQLite allows WITH ... DELETE,
+                    # so admitting it would make the leading keyword meaningless.
+                    "WITH x AS (SELECT 1) SELECT * FROM x"]:
+            with self.subTest(sql=sql):
+                reader = self.query(sql)
+                self.assertTrue(reader.errorsEncountered, sql)
+                self.assertIn("does not begin with SELECT",
+                              "\n".join(errors(reader)))
+
+    def test_a_comment_is_an_error(self):
+        reader = self.query("SELECT name FROM villages -- ; DROP TABLE villages")
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("-- comment", "\n".join(errors(reader)))
+
+    def test_a_semicolon_inside_a_literal_is_not_a_second_statement(self):
+        reader = self.query("SELECT 'a;b' FROM villages")
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_query_part_is_held_to_the_same_rule(self):
+        reader = read([row("village", "calculated", "text",
+                           responses="calc:concat\npart:constant x\n"
+                                     "part:query DELETE FROM villages"),
+                       row("mrccode", "text", "text", maxchars="4")])
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("Query part", "\n".join(errors(reader)))
