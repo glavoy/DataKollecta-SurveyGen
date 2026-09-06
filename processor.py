@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import re
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -13,14 +14,30 @@ from crf_reader import CrfReader
 from excel_reader import ExcelReader
 from json_generator import JsonGenerator
 from models import (
-    KNOWN_AUTOMATIC_FIELDS,
-    RESERVED_SYSTEM_FIELDS,
     AppConfig,
+    KNOWN_AUTOMATIC_FIELDS,
     Question,
+    RESERVED_SYSTEM_FIELDS,
     ResponseSourceType,
     SurveyManifest,
 )
+from skip_parser import parse_skip, split_skip_lines
 from xml_generator import XmlGenerator
+
+
+def _same_code(code: str, literal: str) -> bool:
+    """`FieldComparator.compare(code, '=', literal)`: numeric when both parse."""
+    try:
+        return float(code) == float(literal)
+    except ValueError:
+        return code == literal
+
+
+def _code_sort_key(value: str):
+    try:
+        return (0, float(value), "")
+    except ValueError:
+        return (1, 0.0, value)
 
 
 class SurveyGenProcessor:
@@ -179,6 +196,8 @@ class SurveyGenProcessor:
                 self.question_list_cache[ws.title] = qlist
 
             self._check_csv_references()
+            self._check_csv_columns_and_skip_values()
+            self._check_fields_consistent_across_forms(crfs)
             # After the question lists exist: this needs each form's real
             # field names, which _check_crfs_against_worksheets (run before
             # the sheets are read) cannot see.
@@ -694,6 +713,130 @@ class SurveyGenProcessor:
                     f"file is in {csv_dir}. The question would show an empty list in the field."
                 )
                 self.errorsEncountered = True
+
+    def _check_csv_columns_and_skip_values(self) -> None:
+        """What a csv-backed list actually holds, checked against the sheet.
+
+        Two things only the file can tell. A `filter:`, `display:` or `value:`
+        column that is not in the header matches nothing, so the list is empty
+        in the field with no message anywhere. And a skip that compares the
+        field with a value the value column never holds -- and that no
+        `not_in_list`/`dont_know` line declares -- can only ever fire, or only
+        ever stay silent. The skip-graph analysis cannot see csv codes; this
+        can.
+        """
+        csv_dir = Path(self.config.csvFiles.rstrip("\\/")) if self.config.csvFiles else None
+        if csv_dir is None or not (csv_dir.exists() and csv_dir.is_dir()):
+            return
+
+        headers: dict[str, list[str]] = {}
+        values: dict[tuple[str, str], set[str]] = {}
+
+        def load(name: str) -> bool:
+            if name in headers:
+                return True
+            path = csv_dir / name
+            if not path.exists():
+                return False
+            with path.open(newline="", encoding="utf-8-sig") as handle:
+                rows = list(csv.reader(handle))
+            headers[name] = [h.strip() for h in rows[0]] if rows else []
+            for row in rows[1:]:
+                for index, column in enumerate(headers[name]):
+                    cell = row[index].strip() if index < len(row) else ""
+                    if cell:
+                        values.setdefault((name, column), set()).add(cell)
+            return True
+
+        for worksheet, questions in self.question_list_cache.items():
+            by_name = {q.fieldName: q for q in questions}
+            for question in questions:
+                if question.responseSourceType != ResponseSourceType.CSV:
+                    continue
+                name = question.responseSourceFile
+                if not name or not load(name):
+                    continue  # _check_csv_references reports a missing file
+                header = headers[name]
+                wanted = [f.column for f in question.responseFilters]
+                wanted += [c for c in (question.responseDisplayColumn, question.responseValueColumn) if c]
+                missing = sorted({c for c in wanted if c not in header})
+                if missing:
+                    self._package_error(
+                        f"ERROR - CSV: In worksheet '{worksheet}', FieldName '{question.fieldName}' "
+                        f"reads column(s) {', '.join(missing)} from {name}, which has no such column "
+                        f"(its header is {', '.join(header)}). A filter on a missing column matches "
+                        "nothing, so the list is always empty."
+                    )
+                    continue
+
+                value_column = question.responseValueColumn or question.responseDisplayColumn
+                codes = set(values.get((name, value_column), set()))
+                for special in (question.responseNotInListValue, question.responseDontKnowValue):
+                    if special:
+                        codes.add(special)
+                if question.dontKnow in {"TRUE", "True", "true"}:
+                    codes.add("-7")
+                if question.refuse in {"TRUE", "True", "true"}:
+                    codes.add("-8")
+
+                for other in questions:
+                    if not other.skip:
+                        continue
+                    for skip in split_skip_lines(other.skip):
+                        parsed = parse_skip(skip)
+                        if parsed is None or parsed.field != question.fieldName:
+                            continue
+                        if parsed.operator not in {"=", "<>", "!=", "contains", "does not contain"}:
+                            continue
+                        if any(_same_code(code, parsed.value) for code in codes):
+                            continue
+                        shown = sorted(codes, key=_code_sort_key)
+                        self._package_error(
+                            f"ERROR - Skip: In worksheet '{worksheet}', the skip for FieldName "
+                            f"'{other.fieldName}' tests '{question.fieldName}' against {parsed.value}, "
+                            f"which {name} ({value_column}) never holds"
+                            f"{' and no not_in_list line declares' if not question.responseNotInListValue else ''} "
+                            f"({', '.join(shown[:12])}{', …' if len(shown) > 12 else ''}). The rule can only ever "
+                            f"{'fire' if parsed.operator in {'<>', '!=', 'does not contain'} else 'stay silent'}."
+                        )
+            del by_name
+
+    def _check_fields_consistent_across_forms(self, crfs: list) -> None:
+        """One fieldname, two forms, two meanings.
+
+        A linking field recurs by design and an automatic copy of a parent
+        value is common; a question re-asked in a second form with different
+        codes is not. The export puts both under one column name, so the two
+        look comparable when they are not. A warning: real dictionaries do
+        this on purpose now and then.
+        """
+        linking = {(crf.linkingfield or "").strip().lower() for crf in crfs if (crf.linkingfield or "").strip()}
+        seen: dict[str, dict[str, str]] = {}
+        for worksheet, questions in self.question_list_cache.items():
+            for question in questions:
+                name = question.fieldName.strip()
+                if not name or name.lower() in linking:
+                    continue
+                if name.lower() in RESERVED_SYSTEM_FIELDS or name.lower() in KNOWN_AUTOMATIC_FIELDS:
+                    continue
+                if question.questionType in {"automatic", "calculation", "calc", "calculated", "information"}:
+                    continue
+                codes = ExcelReader._static_codes(question) or []
+                signature = f"{question.questionType}/{question.fieldType}/{','.join(sorted(codes, key=_code_sort_key))}"
+                seen.setdefault(name, {})[worksheet] = signature
+        for name, by_sheet in sorted(seen.items()):
+            if len(by_sheet) < 2 or len(set(by_sheet.values())) < 2:
+                continue
+            where = " and ".join(f"'{ws}' ({sig})" for ws, sig in by_sheet.items())
+            self.logstring.append(
+                f"WARNING - FieldName: '{name}' is defined differently in worksheets {where}. The same "
+                "name with different codes makes the two export columns look comparable when they are "
+                "not. Rename one, or align the codes."
+            )
+
+    def _package_error(self, message: str) -> None:
+        self.logstring.append(message)
+        self.errorsEncountered = True
 
     def _discard_generated_files(self) -> None:
         """Remove part-built output after a failure.

@@ -317,9 +317,9 @@ Each questionnaire worksheet (`_dd` worksheets) must have exactly 14 columns wit
 - The first row of each worksheet must contain these exact column headers
 - Rows that are merged will be ignored (useful for section headers or notes)
 - Each non-merged row after the header represents one question/field
-- Column 12 was named `NA` before the Optional column existed -- a worksheet with `NA` there
-  instead of `Optional` is still accepted, but that column's contents are ignored entirely. See
-  the [Optional](#optional) section below.
+- Column 12 was named `NA` before the Optional column existed. A worksheet that still says `NA`
+  there is an **error** and no package is built: rename the header to `Optional`. See the
+  [Optional](#optional) section below.
 
 ---
 
@@ -1184,9 +1184,10 @@ regardless of this column. That is no longer true -- if your dictionary has a `c
 that should stay skippable, set `Optional` to `TRUE` on it explicitly. The generator warns (but
 does not error) if it finds a `comments` field without Optional set.
 
-**Backward compatibility:** a dictionary written before this column existed still has `NA` as
-the header there instead of `Optional`. That is still accepted -- the column's contents are
-simply ignored, exactly as before.
+**Old dictionaries:** a dictionary written before this column existed still has `NA` as the
+header there instead of `Optional`. That is now an error, and the package is not built until the
+header is renamed. It used to be accepted with the column's contents ignored, which meant a
+designer who filled in Optional on an un-renamed sheet got no optional questions and no message.
 
 ---
 
@@ -2206,6 +2207,27 @@ These catch mistakes that produce a valid-looking XML file but broken data colle
 7. **Skip Logic Validation**: Verifies skip syntax and field references
 8. **Cross-Field Validation**: Checks that referenced fields exist and appear in correct order
 9. **Duplicate Detection**: Identifies duplicate field names
+10. **Comparison semantics**: A LogicCheck operator the app does not know (`>>`, `=<`) is an
+    error -- the app would accept it and compare as false, so the check could never fire. A
+    LogicCheck literal, or a skip value on a checkbox, that is not one of the field's codes
+    (Don't know / Refuse codes count when those buttons are on) is an error for the same
+    reason. Radio and combobox skip values are covered by the skip-graph analysis.
+11. **CSV contents** (processor, needs `csvFiles`): a `filter:`, `display:` or `value:` column
+    that is not in the file's header is an error -- the list would always be empty. A skip
+    that tests a csv-backed field against a value the value column never holds, and that no
+    `not_in_list`/`dont_know` line declares, is an error.
+12. **Date range order**: a date question whose UpperRange falls before its LowerRange
+    (relative offsets and fixed dates are compared as days from today) accepts no date at
+    all and is an error.
+13. **Mask length**: a mask that fills more characters than MaxCharacters allows -- or, with
+    `=N`, a different number -- is an error; the value could never be typed in full.
+14. **Fields across forms** (processor): the same FieldName defined with a different type or
+    different codes in two worksheets is a **warning**. Linking fields and automatic copies of
+    a parent value are exempt.
+
+Checks that need the field app's own code to decide -- a logic check as its parser reads it, a
+csv cascade as its csv service resolves it, how a pair of skips routes a Don't-know answer --
+belong to `DataKollecta-SurveyTest`, which compiles the app and runs the package.
 
 ### Best Practices
 

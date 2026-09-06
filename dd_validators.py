@@ -42,6 +42,30 @@ from models import (
 )
 from skip_parser import parse_skip, split_skip_lines
 
+import re
+from datetime import date, datetime
+
+# The comparisons the app's `FieldComparator` knows. Its tokenizer accepts any
+# run of `<>=!` as an operator and then compares with it, and an operator it
+# does not know is simply false -- so `age >> 18` is a check that parses,
+# never fires, and never complains. Caught here instead.
+KNOWN_COMPARISONS = frozenset({"=", "==", "!=", "<>", "<", ">", "<=", ">="})
+_OPERATOR_TOKEN_RE = re.compile(r"[\w_]+\s*([<>=!]+)\s*")
+# `field = 3`, `field <> 'x'`, `field contains 99`: a field compared with a
+# literal, the shape whose right-hand side can be checked against a code list.
+_LITERAL_TEST_RE = re.compile(
+    r"([\w_]+)\s*(==|=|<>|!=|contains|does not contain)\s*(?:'([^']*)'|(-?\d+(?:\.\d+)?))(?![\w.])"
+)
+# The app stores Don't know and Refuse as these codes, outside the list.
+DONT_KNOW_CODE = "-7"
+REFUSE_CODE = "-8"
+_TRUTHY = {"TRUE", "True", "true"}
+# The mask reading `MaskedTextInputFormatter` uses: `[...]` is one character,
+# anything else is a literal carried through.
+_MASK_SLOT_RE = re.compile(r"\[([^\]]+)\]|([^\[]+)")
+_DATE_OFFSET_RE = re.compile(r"^([+-])(\d+)([dwmy])$")
+_DAYS_PER_UNIT = {"d": 1, "w": 7, "m": 30, "y": 365}
+
 
 class WorksheetValidationMixin:
     """The whole-worksheet checks of `ExcelReader`. Not usable on its own.
@@ -132,6 +156,171 @@ class WorksheetValidationMixin:
             add("a response filter", cls.PLACEHOLDER_RE.findall(response_filter.value))
         add("its question text", cls.PLACEHOLDER_RE.findall(question.questionText))
         return refs
+
+    # ── Codes a selection question can hold ─────────────────────────────
+
+    @staticmethod
+    def _static_codes(question: Question) -> list[str] | None:
+        """The codes of a static Responses list, split as the emitter splits
+        them (first colon), plus the Don't know / Refuse codes when those
+        buttons are on. None when the list is not static or not a selection."""
+        if question.questionType not in {"radio", "checkbox", "combobox"}:
+            return None
+        if question.responseSourceType != ResponseSourceType.STATIC or not question.responses:
+            return None
+        codes: list[str] = []
+        for line in question.responses.splitlines():
+            index = line.find(":")
+            if index < 0:
+                continue
+            codes.append(line[:index].strip())
+        if question.dontKnow in _TRUTHY:
+            codes.append(DONT_KNOW_CODE)
+        if question.refuse in _TRUTHY:
+            codes.append(REFUSE_CODE)
+        return codes
+
+    @staticmethod
+    def _same_code(code: str, literal: str) -> bool:
+        """`FieldComparator.compare(code, '=', literal)`: numeric when both
+        parse, so `01` matches `1`; text otherwise."""
+        try:
+            return float(code) == float(literal)
+        except ValueError:
+            return code == literal
+
+    def _check_logic_operators(self, worksheet: str) -> None:
+        """An operator the app does not know compares as false, silently."""
+        for question in self.questionList:
+            for logic_check in question.logicChecks:
+                expression = self.QUOTED_STRING_RE.sub("", logic_check.split(";", 1)[0])
+                unknown = sorted(
+                    {op for op in _OPERATOR_TOKEN_RE.findall(expression) if op not in KNOWN_COMPARISONS}
+                )
+                if unknown:
+                    self._error(
+                        f"ERROR - LogicCheck: In worksheet '{worksheet}', the LogicCheck for FieldName "
+                        f"'{question.fieldName}' uses {', '.join(unknown)}, which is not a comparison the "
+                        "app knows. It would be accepted and then compare as false, so the check could "
+                        "never fire. Use one of =, <>, !=, <, >, <=, >=."
+                    )
+
+    def _check_logic_literals(self, worksheet: str) -> None:
+        """`sex = 3` when sex is coded 1/2: the check can never fire, or fires
+        on a value the field cannot hold."""
+        by_name = {q.fieldName: q for q in self.questionList}
+        for question in self.questionList:
+            for logic_check in question.logicChecks:
+                expression = logic_check.split(";", 1)[0]
+                for match in _LITERAL_TEST_RE.finditer(expression):
+                    field, _, quoted, number = match.groups()
+                    literal = quoted if quoted is not None else number
+                    target = by_name.get(field)
+                    if target is None:
+                        continue
+                    codes = self._static_codes(target)
+                    if not codes:
+                        continue
+                    if any(self._same_code(code, literal) for code in codes):
+                        continue
+                    self._error(
+                        f"ERROR - LogicCheck: In worksheet '{worksheet}', the LogicCheck for FieldName "
+                        f"'{question.fieldName}' compares '{field}' with {literal}, which is not one of its "
+                        f"codes ({', '.join(codes)})."
+                    )
+
+    def _check_checkbox_skip_values(self, worksheet: str) -> None:
+        """A skip on a checkbox comparing with a code the list does not have.
+
+        The skip-graph analysis covers radio and combobox lists; it leaves
+        checkboxes out because their stored value is a comma-joined set. The
+        codes are still known, and `contains 96` on a list with no 96 can only
+        ever be false.
+        """
+        by_name = {q.fieldName: q for q in self.questionList}
+        for question in self.questionList:
+            if not question.skip:
+                continue
+            for skip in split_skip_lines(question.skip):
+                parsed = parse_skip(skip)
+                if parsed is None:
+                    continue
+                target = by_name.get(parsed.field)
+                if target is None or target.questionType != "checkbox":
+                    continue
+                if parsed.operator not in {"=", "<>", "!=", "contains", "does not contain"}:
+                    continue
+                codes = self._static_codes(target)
+                if not codes:
+                    continue
+                if any(self._same_code(code, parsed.value) for code in codes):
+                    continue
+                self._error(
+                    f"ERROR - Skip: In worksheet '{worksheet}', the skip for FieldName "
+                    f"'{question.fieldName}' tests '{parsed.field}' against {parsed.value}, which is not "
+                    f"one of its codes ({', '.join(codes)}). The rule can only ever "
+                    f"{'fire' if parsed.operator in {'<>', '!=', 'does not contain'} else 'stay silent'}."
+                )
+
+    @staticmethod
+    def _date_bound_in_days(value: str) -> int | None:
+        """A LowerRange/UpperRange on a date, as days from today. Relative
+        offsets use the same unit lengths as the app; a fixed date is measured
+        from today so the two kinds compare."""
+        if value in {"0", "+0d", "-0d"}:
+            return 0
+        offset = _DATE_OFFSET_RE.fullmatch(value)
+        if offset:
+            sign, count, unit = offset.groups()
+            days = int(count) * _DAYS_PER_UNIT[unit]
+            return days if sign == "+" else -days
+        try:
+            fixed = datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        return (fixed - date.today()).days
+
+    def _check_date_ranges_ordered(self, worksheet: str) -> None:
+        """The latest allowed date must not come before the earliest, or no
+        date is accepted and the question cannot be answered."""
+        for question in self.questionList:
+            if question.questionType != "date":
+                continue
+            low = self._date_bound_in_days(question.lowerRange)
+            high = self._date_bound_in_days(question.upperRange)
+            if low is None or high is None or low <= high:
+                continue
+            self._error(
+                f"ERROR - LowerRange: In worksheet '{worksheet}', FieldName '{question.fieldName}' has "
+                f"LowerRange {question.lowerRange} after UpperRange {question.upperRange}, so no date "
+                "is accepted and the question cannot be answered."
+            )
+
+    def _check_mask_length(self, worksheet: str) -> None:
+        """A mask that fills more characters than MaxCharacters allows can
+        never be typed in full; a fixed-length field whose mask fills a
+        different number can never be filled."""
+        for question in self.questionList:
+            if not question.mask or question.maxCharacters == "-9":
+                continue
+            fixed = question.maxCharacters.startswith("=")
+            try:
+                allowed = int(question.maxCharacters.lstrip("="))
+            except ValueError:
+                continue
+            length = sum(
+                1 if char_class else len(literal)
+                for char_class, literal in _MASK_SLOT_RE.findall(question.mask)
+            )
+            bad = length != allowed if fixed else length > allowed
+            if not bad:
+                continue
+            self._error(
+                f"ERROR - Mask: In worksheet '{worksheet}', FieldName '{question.fieldName}' has a mask "
+                f"that fills {length} characters but MaxCharacters is {question.maxCharacters}"
+                f"{' (exactly ' + str(allowed) + ')' if fixed else ''}, so a value matching the mask "
+                f"{'can never be the right length' if fixed else 'cannot be typed in full'}."
+            )
 
     def _check_comments_field_is_optional(self, worksheet: str) -> None:
         """A field named 'comments' used to be hardcoded as always-optional in

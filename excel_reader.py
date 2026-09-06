@@ -60,9 +60,10 @@ class ExcelReader(
         "Skip",
         "Comments",
     ]
-    # Index of the Optional/NA column within COLUMN_NAMES -- a dictionary
-    # written before this column was repurposed still has "NA" there, and is
-    # still accepted: see the header check in create_question_list.
+    # Index of the Optional column within COLUMN_NAMES. A dictionary written
+    # before this column was repurposed still has "NA" there; that used to be
+    # accepted with the column's contents ignored, and is now an error -- see
+    # the header check in create_question_list.
     OPTIONAL_COLUMN_INDEX = 11
     LEGACY_NA_COLUMN_NAME = "NA"
 
@@ -152,14 +153,23 @@ class ExcelReader(
                     expected_legacy = list(self.COLUMN_NAMES)
                     expected_legacy[self.OPTIONAL_COLUMN_INDEX] = self.LEGACY_NA_COLUMN_NAME
                     if current_headers == expected_legacy:
+                        # Accepting this silently meant an old sheet built
+                        # without complaint, with whatever it held in that
+                        # column ignored -- so a designer who filled in
+                        # Optional on an un-renamed sheet got no optional
+                        # questions and no message. The rename is the fix.
                         self.optionalColumnIsLegacyNa = True
+                        self._error(
+                            f"ERROR - Header: In worksheet '{worksheet.title}', column 12 is still "
+                            "headed 'NA'. Rename it to 'Optional' (its contents are not read while "
+                            "it says 'NA', so nothing on this sheet can be optional)."
+                        )
                     elif current_headers != self.COLUMN_NAMES:
                         self._error(
                             "ERROR - Header: The header names in worksheet "
                             f"'{worksheet.title}' are incorrect. Header names should be: "
                             "FieldName, QuestionType, FieldType, QuestionText, MaxCharacters, "
-                            "Responses, LowerRange, UpperRange, LogicCheck, DontKnow, Refuse, Optional, Skip, Comments "
-                            "(a dictionary written before the Optional column was added may still say 'NA' there instead)"
+                            "Responses, LowerRange, UpperRange, LogicCheck, DontKnow, Refuse, Optional, Skip, Comments"
                         )
                     continue
 
@@ -348,6 +358,11 @@ class ExcelReader(
         self._check_max_characters_is_meaningful(worksheet.title)
         self._check_reserved_automatic_fields(worksheet.title)
         self._check_comments_field_is_optional(worksheet.title)
+        self._check_logic_operators(worksheet.title)
+        self._check_logic_literals(worksheet.title)
+        self._check_checkbox_skip_values(worksheet.title)
+        self._check_date_ranges_ordered(worksheet.title)
+        self._check_mask_length(worksheet.title)
         if not self.worksheetErrorsEncountered:
             self.logstring.append(f"No errors found in '{worksheet.title}'")
 

@@ -23,7 +23,7 @@ HEADERS = [
 ]
 
 # A dictionary written before the Optional column was added still has "NA"
-# there -- still accepted, but its contents are ignored entirely.
+# there. That is now an error: the column must be renamed.
 LEGACY_NA_HEADERS = [h if h != "Optional" else "NA" for h in HEADERS]
 
 
@@ -462,19 +462,23 @@ class OptionalColumnTests(unittest.TestCase):
         reader = read([row("notes", "text", "text", maxchars="80")])
         self.assertEqual(warnings(reader), [])
 
-    def test_a_legacy_na_header_is_still_accepted(self):
+    def test_a_legacy_na_header_is_an_error(self):
+        # Accepting it silently meant a designer who filled in Optional on an
+        # un-renamed sheet got no optional questions and no message.
         reader = read([row("notes", "text", "text", maxchars="80")], headers=LEGACY_NA_HEADERS)
-        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn("'NA'", message)
+        self.assertIn("Optional", message)
 
-    def test_a_legacy_na_columns_contents_are_ignored_entirely(self):
-        # Whatever an old sheet has in the NA cell -- valid, garbage, or a
-        # value that would have set Optional -- must never be parsed. A
-        # stray value there was never meant to make anything optional.
+    def test_a_legacy_na_columns_contents_are_still_not_parsed(self):
+        # The header error is the only message: whatever the NA cell holds is
+        # not read as Optional on top of it.
         reader = read(
             [row("notes", "text", "text", maxchars="80", optional="garbage")],
             headers=LEGACY_NA_HEADERS,
         )
-        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+        self.assertEqual(len(errors(reader)), 1, "\n".join(errors(reader)))
 
     def test_a_header_that_is_neither_na_nor_optional_is_rejected(self):
         bad_headers = [h if h != "Optional" else "Something Else" for h in HEADERS]
@@ -966,3 +970,127 @@ class CrossRowChecksRunRegardlessTests(unittest.TestCase):
         reader = read([numeric_row()])
 
         self.assertIn("No errors found in 'demo_dd'", reader.logstring)
+
+
+def logic_row(fieldname, qtype, ftype, logic, **kwargs):
+    r = row(fieldname, qtype, ftype, **kwargs)
+    r[8] = logic
+    return r
+
+
+class LogicOperatorTests(unittest.TestCase):
+    """The app accepts any run of `<>=!` as an operator and compares with it;
+    one it does not know is simply false. `age >> 18` never fires and never
+    complains -- unless the generator says so."""
+
+    def test_an_unknown_operator_is_an_error(self):
+        reader = read([logic_row("age", "text", "text_integer", "age >> 18; 'Too old'",
+                                 maxchars="3", lower="0", upper="99")])
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn(">>", message)
+        self.assertIn("never fire", message)
+
+    def test_every_known_operator_is_silent(self):
+        for op in ["=", "!=", "<>", "<", ">", "<=", ">="]:
+            reader = read([logic_row("age", "text", "text_integer", f"age {op} 18; 'x'",
+                                     maxchars="3", lower="0", upper="99")])
+            self.assertFalse(reader.errorsEncountered, f"{op}: " + "\n".join(reader.logstring))
+
+    def test_an_operator_inside_the_message_is_not_read(self):
+        reader = read([logic_row("age", "text", "text_integer", "age > 18; 'use >> here'",
+                                 maxchars="3", lower="0", upper="99")])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+
+class LogicLiteralTests(unittest.TestCase):
+    """`sex = 3` on a field coded 1/2 can never be true."""
+
+    def test_a_literal_that_is_not_a_code_is_an_error(self):
+        reader = read([
+            row("sex", "radio", "integer", responses="1:Male\n2:Female"),
+            logic_row("name", "text", "text", "sex = 3; 'Men only'", maxchars="20"),
+        ])
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn("'sex' with 3", message)
+        self.assertIn("1, 2", message)
+
+    def test_a_literal_that_is_a_code_is_silent(self):
+        reader = read([
+            row("sex", "radio", "integer", responses="1:Male\n2:Female"),
+            logic_row("name", "text", "text", "sex = 2 and name <> 'x'; 'Men only'", maxchars="20"),
+        ])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_the_dont_know_code_is_a_code_when_the_button_is_on(self):
+        r = row("sex", "radio", "integer", responses="1:Male\n2:Female")
+        r[9] = "TRUE"
+        reader = read([r, logic_row("name", "text", "text", "sex = -7; 'Unknown'", maxchars="20")])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_padded_code_matches_numerically(self):
+        reader = read([
+            row("site", "radio", "integer", responses="01:A\n02:B"),
+            logic_row("name", "text", "text", "site = 1; 'A only'", maxchars="20"),
+        ])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+
+class CheckboxSkipValueTests(unittest.TestCase):
+    """The skip graph leaves checkboxes out; their codes are still known."""
+
+    def test_contains_a_code_the_list_does_not_have_is_an_error(self):
+        reader = read([
+            row("symptoms", "checkbox", "text", responses="1:Fever\n2:Cough\n96:Other"),
+            row("other", "text", "text", maxchars="20",
+                skip="preskip: if symptoms 'does not contain' 99, skip to after"),
+            row("after", "text", "text", maxchars="20"),
+        ])
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn("against 99", message)
+        self.assertIn("only ever fire", message)
+
+    def test_contains_a_real_code_is_silent(self):
+        reader = read([
+            row("symptoms", "checkbox", "text", responses="1:Fever\n2:Cough\n96:Other"),
+            row("other", "text", "text", maxchars="20",
+                skip="preskip: if symptoms 'does not contain' 96, skip to after"),
+            row("after", "text", "text", maxchars="20"),
+        ])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+
+class DateRangeOrderTests(unittest.TestCase):
+    def test_a_latest_date_before_the_earliest_is_an_error(self):
+        reader = read([row("when", "date", "date", maxchars="12", lower="+0d", upper="-1y")])
+        self.assertTrue(reader.errorsEncountered)
+        self.assertIn("no date is accepted", "\n".join(errors(reader)))
+
+    def test_a_fixed_date_and_an_offset_compare(self):
+        reader = read([row("when", "date", "date", maxchars="12", lower="2030-01-01", upper="+0d")])
+        self.assertTrue(reader.errorsEncountered)
+
+    def test_an_ordered_range_is_silent(self):
+        reader = read([row("when", "date", "date", maxchars="12", lower="-100y", upper="+0d")])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+
+class MaskLengthTests(unittest.TestCase):
+    def test_a_mask_longer_than_the_field_is_an_error(self):
+        reader = read([row("pid", "text", "text", maxchars="=7",
+                           responses="mask:OP-[0-9][0-9][0-9][0-9][0-9][0-9][0-9]")])
+        self.assertTrue(reader.errorsEncountered)
+        message = "\n".join(errors(reader))
+        self.assertIn("fills 10 characters", message)
+
+    def test_a_mask_that_fits_is_silent(self):
+        reader = read([row("pid", "text", "text", maxchars="=7",
+                           responses="mask:OP-[0-9][0-9][0-9][0-9]")])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))
+
+    def test_a_shorter_mask_on_a_variable_length_field_is_silent(self):
+        reader = read([row("pid", "text", "text", maxchars="10",
+                           responses="mask:[0-9][0-9]:[0-9][0-9]")])
+        self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))

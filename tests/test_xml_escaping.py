@@ -139,7 +139,7 @@ class MaskAndMessageTests(unittest.TestCase):
     def test_a_double_quote_in_a_mask(self):
         """`mask value="..."` is the one double-quoted attribute in the format."""
         xml, reader = generate(
-            [row("code", "text", "text", text="Code?", maxchars="6",
+            [row("code", "text", "text", text="Code?", maxchars="7",
                  responses='mask:AA-"99"')]
         )
         self.assertFalse(reader.errorsEncountered, "\n".join(reader.logstring))

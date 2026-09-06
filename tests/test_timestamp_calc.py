@@ -18,7 +18,7 @@ HEADERS = [
     "LogicCheck",
     "DontKnow",
     "Refuse",
-    "NA",
+    "Optional",
     "Skip",
     "Comments",
 ]
