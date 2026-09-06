@@ -345,6 +345,17 @@ The variable/field name that will be used in the database and XML.
 - ❌ `2ndvisit` (starts with number)
 - ❌ `first name` (contains space)
 
+> **The app now enforces this, and the generator does not.** A `FieldName` becomes a SQLite
+> column name, so DataKollecta checks every one of them as it installs a package and
+> **refuses the whole survey** if one is not a plain identifier — naming the offending value
+> and the attribute it came from. This generator does not validate `FieldName`, so a
+> dictionary with `first name` in it still builds a package cleanly and fails at install
+> instead. The same rule now applies to the `table` and `column` attributes of a
+> database-backed response list, and to every field name a `crfs` row mentions.
+>
+> CSV lookup files are exempt: their columns are a header row, so `Health Facility` is
+> still a usable column there.
+
 ---
 
 ### QuestionType
