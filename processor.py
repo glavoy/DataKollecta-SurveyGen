@@ -530,21 +530,26 @@ class SurveyGenProcessor:
         worksheet and by design cannot see another sheet or the crfs row, and
         half of what a graph analysis wants to say spans both.
 
+        Only ERROR findings are logged here; the errors block generation, so
+        the log has to say why. WARNING findings are silently dropped -- the
+        graph analysis is noisy at that level, and SurveyTest's engine-
+        integrity checks are where those get caught instead.
+
         Findings are appended under each worksheet's own heading so they read
         in place, next to that sheet's other messages, rather than in a block
         at the end that a reader has to correlate by hand.
         """
         for worksheet, questions in self.question_list_cache.items():
             findings = skip_graph.lint_form(worksheet, questions)
-            if not findings:
+            errors = [f for f in findings if f.severity is skip_graph.Severity.ERROR]
+            if not errors:
                 continue
             heading = f"\rChecking worksheet: '{worksheet}'"
             if heading not in self.logstring:
                 self.logstring.append(heading)
-            for finding in findings:
+            for finding in errors:
                 self.logstring.append(finding.format())
-                if finding.severity is skip_graph.Severity.ERROR:
-                    self.errorsEncountered = True
+                self.errorsEncountered = True
 
     def _crfs_error(self, message: str) -> None:
         """Log a crfs-level error under the same heading CrfReader uses."""
