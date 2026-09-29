@@ -348,6 +348,7 @@ class ExcelReader(
         self._check_logic_field_names(worksheet.title)
         self._check_skip_to_field_names(worksheet.title)
         self._check_reserved_variable_reads(worksheet.title)
+        self._check_calculation_field_exists(worksheet.title)
         self._check_message_placeholders(worksheet.title)
         self._check_required_max_characters(worksheet.title)
         self._check_ranges(worksheet.title)

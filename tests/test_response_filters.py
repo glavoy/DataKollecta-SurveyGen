@@ -167,6 +167,14 @@ class ResponseFilterXmlTests(unittest.TestCase):
             # primarykey has to name a real column on the form now, and
             # `sleptunder` is what this sheet actually declares.
             crfs.append([10, "nets", "Nets", "sleptunder", "", 1, "", "", "", "", "", "", "", "", ""])
+            # The query below reads these two; a calculation may only name a
+            # field the form actually declares.
+            for name in ("hhid", "netnum"):
+                worksheet.append(
+                    _question_row(
+                        name, "calc:constant\nvalue:1", question_type="automatic"
+                    )
+                )
             worksheet.append(
                 _question_row(
                     "used_linenums",

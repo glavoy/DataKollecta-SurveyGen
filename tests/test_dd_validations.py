@@ -1106,9 +1106,9 @@ class QuerySqlTests(unittest.TestCase):
     """
 
     def query(self, sql):
-        return read([row("village", "calculated", "text",
-                         responses=f"calc:query\nsql:{sql}\nparam:@mrccode = mrccode"),
-                     row("mrccode", "text", "text", maxchars="4")])
+        return read([row("mrccode", "text", "text", maxchars="4"),
+                     row("village", "calculated", "text",
+                         responses=f"calc:query\nsql:{sql}\nparam:@mrccode = mrccode")])
 
     def test_a_lookup_still_generates(self):
         reader = self.query(

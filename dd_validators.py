@@ -362,6 +362,62 @@ class WorksheetValidationMixin:
                         "rather than a value. Word the message without it."
                     )
 
+    def _check_calculation_field_exists(self, worksheet: str) -> None:
+        """Every field a calculation reads must exist, and come before it.
+
+        The app reads an unanswered or nonexistent field as empty text, and a
+        `case` comparing empty text simply does not match. So a calculation
+        naming a field that is not there -- or one that is only answered later
+        in the form, so still empty when the calculation runs -- does not
+        fail: it quietly takes its `else` branch forever. That is how an
+        eligibility rule that tested an undefined `age_at_sep2023` sat in a
+        released dictionary doing nothing.
+
+        Checked: the `field:` of a lookup/age/date calculation, a `when:`
+        field, `part lookup` and `param` fields, and every `[[name]]`
+        placeholder in a calculation's constant, separator or sql. `today` is
+        the one word those slots accept that is not a field. The reserved
+        system fields (written first by the generator, or already reported by
+        `_check_reserved_variable_reads` when trailing) and the yyyy/yy/mm/dd/
+        doy fields are always known.
+        """
+        field_index = {q.fieldName: i for i, q in enumerate(self.questionList)}
+        always_known = RESERVED_SYSTEM_FIELDS | KNOWN_AUTOMATIC_FIELDS
+        for cur_index, question in enumerate(self.questionList):
+            cur_field = question.fieldName
+            if cur_field.lower() in RESERVED_SYSTEM_FIELDS:
+                continue  # the row is dropped and already warned about
+            refs = {
+                ref
+                for ref, where in self._question_field_refs(question)
+                if where == "its calculation"
+            }
+            if question.calculationType == CalculationType.DATE_DIFF:
+                # `value:` is the end date: `today`, or a field name written
+                # bare or as [[name]] (the bracketed form is found above).
+                end = question.calculationConstantValue.strip()
+                if end:
+                    refs.add(end.strip("[]"))
+            for ref in sorted(refs):
+                if ref.lower() == "today" or ref in RESERVED_SYSTEM_FIELDS:
+                    continue
+                if ref in field_index:
+                    if field_index[ref] >= cur_index:
+                        position = "itself" if ref == cur_field else "a FieldName AFTER the current question"
+                        self._error(
+                            f"ERROR - Calculation: In worksheet '{worksheet}', the calculation for FieldName "
+                            f"'{cur_field}' uses {position}: {ref}. A field is empty until its question has "
+                            "been reached, so the calculation would read nothing. Move the field above this "
+                            "row, or move this calculation below it."
+                        )
+                elif ref not in always_known:
+                    self._error(
+                        f"ERROR - Calculation: In worksheet '{worksheet}', the calculation for FieldName "
+                        f"'{cur_field}' uses a nonexistent FieldName: {ref}. The app reads a "
+                        "field that does not exist as empty, so the calculation would silently ignore "
+                        "that part of its rule. Fix the spelling, or add a row that defines it."
+                    )
+
     def _check_reserved_variable_reads(self, worksheet: str) -> None:
         """Nothing in a question may read a trailing variable.
 

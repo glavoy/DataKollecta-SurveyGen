@@ -898,6 +898,11 @@ For an OR, give the group its own automatic field and test that field instead.
 
 - Operators: `=`, `!=`, `<>`, `>`, `<`, `>=`, `<=`, `contains`, `does not
   contain`. `<>` and `!=` mean the same thing.
+- **Every field a calculation names must exist, and sit above it,** in the same worksheet (the `when`
+  field, `field:`, `param:` fields, `[[placeholders]]`; `today` and the system fields
+  such as `startdate` are the exceptions). A misspelled or never-defined field is an
+  error (as is a field below the calculation, or the calculation itself), because the app
+  would read it as empty and the rule would quietly never fire.
 - Put spaces around the operator — `when:age>=18 => 1` is rejected.
 - Do not quote values. `when:sex = "1"` compares against a three-character
   string and never matches.
